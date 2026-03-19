@@ -1,0 +1,100 @@
+This DataDictionary.txt file was updated on 07-16-2025 by Matthew A. Massey, Kentucky Geological Survey
+
+
+
+EarthScape AI Dataset (VERSION 1.0.1)
+
+
+
+1. File List: 
+- README_v1_0_1.txt - Text file with dataset metadata.
+
+- DataDictionary_v1_0_1.txt - This text document.
+
+- earthscape_EXAMPLE_EXAMPLE.zip - ZIP file containing small example of EarthScape data for inspection purposes.
+
+- earthscape_warren_bgn.zip - ZIP files containing EarthScape dataset files for the Bowling Green North 7.5-minute quadrangle.
+
+- earthscape_warren_bgs.zip - ZIP files containing EarthScape dataset files for the Bowling Green South 7.5-minute quadrangle.
+
+- earthscape_warren_bristow.zip - ZIP files containing EarthScape dataset files for the Bristow 7.5-minute quadrangle.
+
+- earthscape_warren_hadley.zip - ZIP files containing EarthScape dataset files for the Hadley 7.5-minute quadrangle.
+
+- earthscape_warren_rockfield.zip - ZIP files containing EarthScape dataset files for the Rockfield 7.5-minute quadrangle.
+
+- earthscape_warren_smithsgrove.zip - ZIP files containing EarthScape dataset files for the Smiths Grove 7.5-minute quadrangle.
+
+- earthscape_hardin_howevalley.zip - ZIP files containing EarthScape dataset files for the Howe Valley 7.5-minute quadrangle.
+
+- earthscape_hardin_sonora.zip - ZIP files containing EarthScape dataset files for the Sonora 7.5-minute quadrangle.
+* All ZIP files can be described with the following structure:
+- earthscape_{subset_area}_{quadrangle}/patches - Directory containing GeoTIFF files for each patch location in relevant area; files named by unique patch ID and modality (e.g., {patch_id}_{modality}.tif). Each patch location is associated with 38 images, including surficial geologic mask, DEM, RGB+NIR, NHD, OSM, and terrain features (slope, profile curvature, planform curvature, standard deviation of slope, elevation percentile terrain features calculated at six spatial scales); each patch location is also associated with one .csv file containing one-hot encoded labels for the patch.
+
+- earthscape_{subset_area}_{quadrangle}/locations.geojson - Vector GIS file with patch location footprints.
+
+- earthscape_{subset_area}_{quadrangle}/labels.csv - Table of one-hot encoded labels for each of the seven geologic classes at each of the patch locations.
+
+- earthscape_{subset_area}_{quadrangle}/areas.csv - Table of class proportions present in each patch.
+
+
+* Relationship between files:
+- patch_id is a common field name in earthscape_{subset_area}_{quadrangle}/locations.geojson, earthscape_{subset_area}_{quadrangle}/labels.csv, and earthscape_{subset_area}_{quadrangle}/areas.csv that allows primary-foreign key relationships. GeoTIFF files in earthscape_{subset_area}_{quadrangle}/patches are named in a {patch_id}_{modality}.tif format that allows linking other GeoJSON and CSV files.  
+
+
+2. Data Attributes: 
+- earthscape_{subset_area}_{quadrangle}/locations.geojson
+	- patch_id - Unique ID for each patch polygon location. For example, 256_50_1 is the unique ID and is a primary key to associated labels, class areas per patch, and GeoTIFF images for that patch.
+
+- earthscape_{subset_area}_{quadrangle}/labels.csv
+	- patch_id - Unique ID for each patch polygon location. For example, 256_50_1 is the unique ID and is a primary key to associated location, class areas per patch, and GeoTIFF images for that patch.
+	- af1 - One-hot encoded label for artificial fill (1 is positive, 0 is negative).
+	- Qal - One-hot encoded label for alluvium (1 is positive, 0 is negative).
+	- Qaf - One-hot encoded label for alluvial fans (1 is positive, 0 is negative).
+	- Qat - One-hot encoded label for alluvial terraces (1 is positive, 0 is negative).
+	- Qc - One-hot encoded label for colluvium (1 is positive, 0 is negative).
+	- Qca - One-hot encoded label for colluvial accumulations (toe slope deposits) (1 is positive, 0 is negative).
+	- Qr - One-hot encoded label for residuum (1 is positive, 0 is negative).
+
+- earthscape_{subset_area}_{quadrangle}/areas.csv
+	- patch_id - Unique ID for each patch polygon location. For example, 256_50_1 is the unique ID and is a primary key to associated location, patch labels, and GeoTIFF images for that patch.
+	- af1 - Proportion of artificial fill in patch (between 0-1).
+	- Qal - Proportion of alluvium in patch (between 0-1).
+	- Qaf - Proportion of alluvial fans in patch (between 0-1).
+	- Qat - Proportion of alluvial terraces in patch (between 0-1).
+	- Qc - Proportion of colluvium in patch (between 0-1).
+	- Qca - Proportion of colluvial accumulations (toe slope deposits) in patch (between 0-1).
+	- Qr - Proportion of residuum in patch (between 0-1).
+
+- earthscape_{subset_area}_{quadrangle}/patches
+	- *_aerialb.tif - Blue channel from KyFromAbove aerial overhead imagery dataset.
+	- *_aerialg.tif - Green channel from KyFromAbove aerial overhead imagery dataset.
+	- *_aerialnir.tif - Near infrared (NIR) channel from KyFromAbove aerial overhead imagery dataset.
+	- *_aerialr.tif - Red channel from KyFromAbove aerial overhead imagery dataset.
+	- *_dem.tif - Digital elevation model (DEM) from KyFromAbove lidar dataset.
+	- *_ep*.tif - Elevation percentile calculated with six kernel sizes (5x5, 11x11, 21x21, 51x51, 101x101, 201x201) using DEM with 5-foot resolution only. Values range from 0-100 precentile.
+	- *_geology.tif - Surficial geologic segmentation masks from Kentucky Geological Survey.
+	- *_labels.csv - One-hot encoded labels of surficial geologic classes af1, Qal, Qaf, Qat, Qc, Qca, Qr.
+	- *_nhd.tif - Stream centerlines and water body polygons from National Hydrography Dataset.
+	- *_osm.tif - Road and railway centerlines from OpenStreetMaps.
+	- *_plancurv*.tif - Planform curvature calculated with 5x5 kernel with six DEM resolutions (5-, 10-, 20-, 50-, 100-, and 200-feet per pixel); log-transformed. Values range from negative to positive infinity.
+	- *_procurv*.tif - Profile curvature calculated with 5x5 kernel with six DEM resolutions (5-, 10-, 20-, 50-, 100-, and 200-feet per pixel); log-transformed. Values range from negative to positive infinity.
+	- *_slope*.tif - Slope calculated with 5x5 kernel with six DEM resolutions (5-, 10-, 20-, 50-, 100-, and 200-feet per pixel). Values range from 0-90 degrees.
+	- *_stdslope*.tif - Standard deviation of slope calculated with six kernel sizes (5x5, 11x11, 21x21, 51x51, 101x101, 201x201) using DEM with 5-foot resolution only. Values range from negative to positive infinity. 
+
+
+
+3. Versioning:
+- This is a versioned dataset, and the current version is v1. New map (masks) and feature data will be added as new maps become available, and existing maps products are verified for quality control. Dataset updates will be released as a new version, and will be summarized in this README document.
+
+
+
+4. Data Quality: 
+- The target surficial geologic map GeoTIFF images served as the spatial reference for aligning all other features in the dataset. Once each feature was collected and compiled into its respective GeoTIFF image format, they were each reprojected to align with the reference image coordinates using cubic convolution interpolation. All images were checked to ensure that their bounding coordinates and spatial resolutions were identical across all other images.
+
+- Vector polygon patches were systematically constructed in a grid pattern to cover the target AOIs using the same coordinate reference system, each polygon was assigned a unique patch ID, and then all patches were saved as a GeoJSON file. Each polygon patch was constructed so that it covers an area of exactly 1280 × 1280 feet (256 × 256 pixels), overlaps adjacent patches by 50%, and is fully contained within the target AOI. The vector patch GeoJSON was then used to extract 38 channels for each patch, including target mask, aerial RGB and NIR, DEM, the five terrain features calculated at six scales, NHD, and OSM. The vector patch GeoJSON was also spatially joined with the target surficial geologic map GeoJSON to calculate both one-hot encoded labels and the proportional areas occupied by each target class within each patch, available as a .csv file that can be linked to each patch using the unique patch IDs.
+
+5. Additional References:
+- The reader is referred to the following open-access sources for more details about the dataset:
+	- https://arxiv.org/abs/2503.15625
+	- https://github.com/masseygeo/earthscape

@@ -1,0 +1,87 @@
+# ============================================================================
+# EarthScape — Base Training Configuration
+# ============================================================================
+# Override any value via CLI: python train.py --training.lr 3e-4
+# Select experiment:          python train.py --experiment experiments/midfusion_all.yaml
+#
+# Feature sets (spectral/topo modalities) are defined per-experiment in
+# experiments/*.yaml — NOT here. This keeps the base config infrastructure-only.
+
+# --- Data ---
+data:
+  bucket: "earthscape-dataset"
+  base_prefixes:
+    - "earthscape_data/"
+    - "earthscape_data_v2/"
+  label_cols: ["af1", "Qal", "Qaf", "Qat", "Qc", "Qca", "Qr"]
+  img_size: 256
+  # How many sets to use (null = all). Set to 1 for local debugging.
+  max_sets: null
+
+# --- Caching ---
+cache:
+  # Local NVMe cache directory (SageMaker g4dn has 125GB at /opt/ml/input)
+  # Locally, uses /mnt/e/earthscape/data_cache
+  # Files are downloaded once and kept forever (no eviction)
+  local_cache_dir: "/mnt/e/earthscape/data_cache"  # auto-detected on SM: /opt/ml/input/data_cache
+
+# --- Training ---
+training:
+  batch_size: 32
+  num_epochs: 10
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  num_workers: 8  # increased from 4 for better S3 download parallelism
+  pin_memory: true
+  prefetch_factor: 4  # increased from 2 for better prefetching (8 workers * 4 batches = 32 batches ahead)
+  persistent_workers: true
+
+# --- Model (defaults, overridden by experiment) ---
+model:
+  architecture: "midfusion"  # overridden by --experiment
+  num_classes: 7
+  dropout: 0.3
+
+# --- AMP ---
+amp:
+  enabled: true
+
+# --- Scheduler ---
+scheduler:
+  type: "reduce_on_plateau"  # reduce_on_plateau | cosine
+  factor: 0.5
+  patience: 2
+
+# --- Early stopping ---
+early_stopping:
+  patience: 5
+  min_delta: 0.0001
+
+# --- Checkpointing ---
+checkpoint:
+  save_every_n_epochs: 2
+  keep_top_k: 3  # keep top K checkpoints by val loss
+
+# --- Stats computation (always computed fresh per experiment) ---
+stats:
+  num_batches: 100  # batches to sample for mean/std computation
+
+# --- Logging ---
+logging:
+  use_wandb: true
+  wandb_project: "earthscape"
+  wandb_entity: null  # your wandb username/team, null = default
+  wandb_group: null   # group related experiments, e.g., "model_comparison_v1"
+  wandb_tags: []      # tags for filtering, e.g., ["resnet50", "baseline"]
+  log_every_n_batches: 5
+  log_embeddings: true  # log t-SNE/UMAP at end of training
+  
+# --- Seed ---
+seed: 42
+
+# --- Paths (auto-detected, override if needed) ---
+paths:
+  model_dir: null      # auto: /opt/ml/model on SM, ./outputs locally
+  output_dir: null     # auto: /opt/ml/output on SM, ./outputs locally
+  checkpoint_dir: null # auto: {model_dir}/checkpoints
+  stats_path: null     # auto: {model_dir}/normalization_stats.npy (saved per run, never loaded)

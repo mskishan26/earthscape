@@ -1,0 +1,19 @@
+# ============================================================================
+# Experiment: MidFusion ResNet50 — Topo features only (no spectral)
+# ============================================================================
+# Usage: python train.py --experiment experiments/midfusion_topo_only.yaml
+#
+# Tests whether topographic features alone can classify geology.
+# Spectral backbone receives zero-filled input.
+
+name: midfusion_topo_only
+description: "MidFusion ResNet50 with topo features only (ablation)"
+
+model:
+  architecture: midfusion
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51"]
+  mode: full

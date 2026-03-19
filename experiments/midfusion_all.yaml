@@ -1,0 +1,16 @@
+# ============================================================================
+# Experiment: MidFusion ResNet50 — All spectral + topo features
+# ============================================================================
+# Usage: python train.py --experiment experiments/midfusion_all.yaml
+
+name: midfusion_all
+description: "MidFusion ResNet50 with all spectral + topo features (baseline)"
+
+model:
+  architecture: midfusion
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full  # full | rgb

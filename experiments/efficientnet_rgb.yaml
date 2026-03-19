@@ -1,0 +1,15 @@
+# ============================================================================
+# Experiment: EfficientNet-B0 — RGB aerial imagery only
+# ============================================================================
+# Usage: python train.py --experiment experiments/efficientnet_rgb.yaml
+
+name: efficientnet_rgb
+description: "EfficientNet-B0 on RGB aerial imagery (no topo, no NIR)"
+
+model:
+  architecture: efficientnet_b0
+  dropout: 0.3
+
+features:
+  rgb_modalities: ["aerialr", "aerialg", "aerialb"]
+  mode: rgb

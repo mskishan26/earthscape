@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+wandb/
+outputs/
+data_cache/
+outputs1/
+
+# Virtual environments
+.venv
+
+# Random files
+s3_check.py
+split.csv
+locations.geojson
+dataset_org.py

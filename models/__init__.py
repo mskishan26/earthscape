@@ -1,0 +1,127 @@
+"""
+Model registry and unified interface for EarthScape architectures.
+
+Two model families:
+  - "full" mode: dual-backbone models (spectral + topo inputs)
+  - "rgb" mode: single-backbone models (RGB image input)
+
+Usage:
+    from models import build_model, forward_batch, prepare_inputs, get_model_mode
+
+    model = build_model(cfg)
+    mode = get_model_mode(cfg["model"]["architecture"])
+
+    inputs_dev = prepare_inputs(inputs, device, mode)
+    logits = forward_batch(model, inputs_dev, mode)
+"""
+
+import torch
+import torch.nn as nn
+from typing import Dict, Union
+
+from models.midfusion import MidFusionResNet
+from models.rgb_backbone import RGBBackbone
+
+
+# ============================================================================
+# Registry: architecture_name -> (class, mode, default_kwargs)
+# ============================================================================
+
+MODEL_REGISTRY = {
+    # Full mode (spectral + topo)
+    "midfusion": {
+        "cls": MidFusionResNet,
+        "mode": "full",
+    },
+    # RGB mode (single image backbone)
+    "resnet50": {
+        "cls": RGBBackbone,
+        "mode": "rgb",
+        "kwargs": {"backbone": "resnet50"},
+    },
+    "efficientnet_b0": {
+        "cls": RGBBackbone,
+        "mode": "rgb",
+        "kwargs": {"backbone": "efficientnet_b0"},
+    },
+}
+
+
+def get_model_mode(architecture: str) -> str:
+    """Return 'full' or 'rgb' for a given architecture name."""
+    if architecture not in MODEL_REGISTRY:
+        raise ValueError(
+            f"Unknown architecture '{architecture}'. "
+            f"Available: {list(MODEL_REGISTRY.keys())}"
+        )
+    return MODEL_REGISTRY[architecture]["mode"]
+
+
+def build_model(cfg: dict) -> nn.Module:
+    """
+    Build a model from config.
+
+    Expects cfg to have:
+      cfg["model"]["architecture"]  -> registry key
+      cfg["model"]["num_classes"]
+      cfg["model"]["dropout"]
+      cfg["_features"]["spectral_modalities"]  (for full mode)
+      cfg["_features"]["topo_modalities"]      (for full mode)
+      cfg["_features"]["rgb_modalities"]       (for rgb mode)
+    """
+    model_cfg = cfg["model"]
+    arch = model_cfg["architecture"]
+    entry = MODEL_REGISTRY[arch]
+
+    mode = entry["mode"]
+    extra_kwargs = entry.get("kwargs", {})
+
+    if mode == "full":
+        spectral_ch = len(cfg["_features"]["spectral_modalities"])
+        topo_ch = len(cfg["_features"]["topo_modalities"])
+        model = entry["cls"](
+            num_classes=model_cfg["num_classes"],
+            spectral_in_ch=spectral_ch,
+            topo_in_ch=topo_ch,
+            dropout=model_cfg.get("dropout", 0.3),
+            **extra_kwargs,
+        )
+    elif mode == "rgb":
+        in_ch = len(cfg["_features"].get("rgb_modalities", ["aerialr", "aerialg", "aerialb"]))
+        model = entry["cls"](
+            num_classes=model_cfg["num_classes"],
+            in_channels=in_ch,
+            dropout=model_cfg.get("dropout", 0.3),
+            **extra_kwargs,
+        )
+    else:
+        raise ValueError(f"Unknown mode '{mode}' for architecture '{arch}'")
+
+    return model
+
+
+def prepare_inputs(
+    inputs: Union[torch.Tensor, Dict[str, torch.Tensor]],
+    device: torch.device,
+    mode: str,
+) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+    """Move batch inputs to device based on model mode."""
+    if mode == "rgb":
+        return inputs.to(device, non_blocking=True)
+    else:
+        return {
+            "spectral": inputs["spectral"].to(device, non_blocking=True),
+            "topo": inputs["topo"].to(device, non_blocking=True),
+        }
+
+
+def forward_batch(
+    model: nn.Module,
+    inputs_dev: Union[torch.Tensor, Dict[str, torch.Tensor]],
+    mode: str,
+) -> torch.Tensor:
+    """Run model forward pass based on mode."""
+    if mode == "rgb":
+        return model(inputs_dev)
+    else:
+        return model(inputs_dev["spectral"], inputs_dev["topo"])

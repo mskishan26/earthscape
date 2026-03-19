@@ -1,0 +1,22 @@
+[project]
+name = "earthscape"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3[crt]>=1.42.64",
+    "folium>=0.20.0",
+    "numpy>=2.4.3",
+    "nvidia-ml-py>=13.590.48",
+    "pandas>=3.0.1",
+    "pillow>=12.1.1",
+    "pyproj>=3.7.2",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.8.0",
+    "torch>=2.10.0",
+    "torchvision>=0.25.0",
+    "tqdm>=4.67.3",
+    "umap-learn>=0.5.11",
+    "wandb>=0.25.0",
+]

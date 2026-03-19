@@ -1,0 +1,15 @@
+# ============================================================================
+# Experiment: ResNet-50 — RGB aerial imagery only
+# ============================================================================
+# Usage: python train.py --experiment experiments/resnet50_rgb.yaml
+
+name: resnet50_rgb
+description: "ResNet-50 on RGB aerial imagery (no topo, no NIR)"
+
+model:
+  architecture: resnet50
+  dropout: 0.3
+
+features:
+  rgb_modalities: ["aerialr", "aerialg", "aerialb"]
+  mode: rgb
