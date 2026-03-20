@@ -11,10 +11,12 @@ Architecture:
 import torch
 import torch.nn as nn
 import torchvision
-from torchvision.models import resnet50, ResNet50_Weights
+from torchvision.models import ResNet50_Weights, resnet50
 
 
-def adapt_conv1(resnet: torchvision.models.ResNet, in_channels: int) -> torchvision.models.ResNet:
+def adapt_conv1(
+    resnet: torchvision.models.ResNet, in_channels: int
+) -> torchvision.models.ResNet:
     """
     Replace resnet.conv1 to accept in_channels instead of 3.
     Copies pretrained weights for first 3 channels; initializes extras
@@ -22,9 +24,12 @@ def adapt_conv1(resnet: torchvision.models.ResNet, in_channels: int) -> torchvis
     """
     old = resnet.conv1
     new_conv = nn.Conv2d(
-        in_channels, old.out_channels,
-        kernel_size=old.kernel_size, stride=old.stride,
-        padding=old.padding, bias=(old.bias is not None),
+        in_channels,
+        old.out_channels,
+        kernel_size=old.kernel_size,
+        stride=old.stride,
+        padding=old.padding,
+        bias=(old.bias is not None),
     )
     with torch.no_grad():
         if in_channels >= 3:
@@ -39,7 +44,9 @@ def adapt_conv1(resnet: torchvision.models.ResNet, in_channels: int) -> torchvis
     return resnet
 
 
-def _forward_until_layer3(resnet: torchvision.models.ResNet, x: torch.Tensor) -> torch.Tensor:
+def _forward_until_layer3(
+    resnet: torchvision.models.ResNet, x: torch.Tensor
+) -> torch.Tensor:
     """Run ResNet forward pass up to and including layer3."""
     x = resnet.conv1(x)
     x = resnet.bn1(x)
@@ -54,7 +61,7 @@ def _forward_until_layer3(resnet: torchvision.models.ResNet, x: torch.Tensor) ->
 class MidFusionResNet(nn.Module):
     """
     Dual-backbone ResNet50 with mid-level feature fusion.
-    
+
     Args:
         num_classes: number of output classes (7 geological formations)
         topo_in_ch: topo input channels (7 without NHD, 8 with)
@@ -73,10 +80,14 @@ class MidFusionResNet(nn.Module):
         super().__init__()
 
         # Spectral backbone
-        self.spec_resnet = adapt_conv1(resnet50(weights=ResNet50_Weights.DEFAULT), spectral_in_ch)
+        self.spec_resnet = adapt_conv1(
+            resnet50(weights=ResNet50_Weights.DEFAULT), spectral_in_ch
+        )
 
         # Topo backbone
-        self.topo_resnet = adapt_conv1(resnet50(weights=ResNet50_Weights.DEFAULT), topo_in_ch)
+        self.topo_resnet = adapt_conv1(
+            resnet50(weights=ResNet50_Weights.DEFAULT), topo_in_ch
+        )
 
         # Fusion: concat layer3 outputs (1024+1024) → 1x1 conv → 1024
         self.fusion = nn.Sequential(
@@ -106,11 +117,15 @@ class MidFusionResNet(nn.Module):
         Returns:
             logits: [B, num_classes]
         """
-        spec_feat = _forward_until_layer3(self.spec_resnet, spectral)  # [B, 1024, H', W']
-        topo_feat = _forward_until_layer3(self.topo_resnet, topo)      # [B, 1024, H', W']
+        spec_feat = _forward_until_layer3(
+            self.spec_resnet, spectral
+        )  # [B, 1024, H', W']
+        topo_feat = _forward_until_layer3(self.topo_resnet, topo)  # [B, 1024, H', W']
 
-        fused = self.fusion(torch.cat([spec_feat, topo_feat], dim=1))  # [B, 1024, H', W']
+        fused = self.fusion(
+            torch.cat([spec_feat, topo_feat], dim=1)
+        )  # [B, 1024, H', W']
 
-        out = self.shared_layer4(fused)       # [B, 2048, H'', W'']
-        out = self.gap(out).flatten(1)        # [B, 2048]
-        return self.classifier(out)           # [B, num_classes]
+        out = self.shared_layer4(fused)  # [B, 2048, H'', W'']
+        out = self.gap(out).flatten(1)  # [B, 2048]
+        return self.classifier(out)  # [B, num_classes]

@@ -2,32 +2,34 @@
 Utilities: config loading, seed setting, path resolution, data versioning.
 """
 
-import os
-import sys
-import yaml
-import hashlib
 import argparse
-import subprocess
+import hashlib
+import os
 import random
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+import subprocess
+import sys
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 import torch
-
+import yaml
 
 # ============================================================================
 # Config Loading
 # ============================================================================
 
-def load_config(config_path: str = "config.yaml", cli_overrides: Optional[list] = None) -> Dict[str, Any]:
+
+def load_config(
+    config_path: str = "config.yaml", cli_overrides: list | None = None
+) -> dict[str, Any]:
     """
     Load YAML config, merge experiment config if provided, and apply CLI overrides.
-    
+
     CLI overrides use dot notation: --training.lr 3e-4 --data.use_nhd false
     Experiment config: --experiment experiments/midfusion_all.yaml
     """
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
     # Parse CLI overrides
@@ -66,14 +68,14 @@ def load_config(config_path: str = "config.yaml", cli_overrides: Optional[list] 
     return cfg
 
 
-def load_experiment(experiment_path: str) -> Dict[str, Any]:
+def load_experiment(experiment_path: str) -> dict[str, Any]:
     """
     Load an experiment YAML file.
-    
+
     Experiment files define model architecture, feature sets, and optional
     training overrides for quick experimentation.
     """
-    with open(experiment_path, "r") as f:
+    with open(experiment_path) as f:
         experiment = yaml.safe_load(f)
     print(f"[Experiment] Loaded: {experiment.get('name', experiment_path)}")
     if experiment.get("description"):
@@ -81,16 +83,18 @@ def load_experiment(experiment_path: str) -> Dict[str, Any]:
     return experiment
 
 
-def merge_experiment_into_config(cfg: Dict[str, Any], experiment: Dict[str, Any]) -> Dict[str, Any]:
+def merge_experiment_into_config(
+    cfg: dict[str, Any], experiment: dict[str, Any]
+) -> dict[str, Any]:
     """
     Merge experiment config into base config.
-    
+
     Experiment can override:
       - model.* (architecture, dropout, etc.)
       - training.* (lr, epochs, etc.)
       - features.* (spectral_modalities, topo_modalities, rgb_modalities, mode)
       - Any other top-level section
-    
+
     Features are stored in cfg["_features"] for use by train/evaluate.
     Experiment metadata stored in cfg["_experiment"].
     """
@@ -156,25 +160,43 @@ def _set_nested(d: dict, key_path: str, value: Any):
 
 
 def _resolve_paths(cfg: dict) -> dict:
-    """Auto-detect SageMaker vs local environment and resolve paths."""
+    """Auto-detect SageMaker vs local environment and resolve paths.
+
+    When an experiment is specified, outputs are namespaced under the
+    experiment name so different runs don't clobber each other:
+        ./outputs/midfusion_all/checkpoints/best.pth
+        ./outputs/resnet50_rgb/checkpoints/best.pth
+    """
     is_sagemaker = os.path.exists("/opt/ml")
 
     paths = cfg.get("paths", {})
     cache = cfg.get("cache", {})
+
+    # Experiment name for subdirectory namespacing
+    exp_name = cfg.get("_experiment", {}).get("name", "")
 
     if is_sagemaker:
         default_model_dir = "/opt/ml/model"
         default_output_dir = "/opt/ml/output"
         default_cache_dir = "/opt/ml/input/data_cache"
     else:
-        default_model_dir = "./outputs"
-        default_output_dir = "./outputs"
+        base_output = "./outputs"
+        if exp_name:
+            default_model_dir = os.path.join(base_output, exp_name)
+            default_output_dir = os.path.join(base_output, exp_name)
+        else:
+            default_model_dir = base_output
+            default_output_dir = base_output
         default_cache_dir = "./data_cache"
 
     paths["model_dir"] = paths.get("model_dir") or default_model_dir
     paths["output_dir"] = paths.get("output_dir") or default_output_dir
-    paths["checkpoint_dir"] = paths.get("checkpoint_dir") or os.path.join(paths["model_dir"], "checkpoints")
-    paths["stats_path"] = paths.get("stats_path") or os.path.join(paths["model_dir"], "normalization_stats.npy")
+    paths["checkpoint_dir"] = paths.get("checkpoint_dir") or os.path.join(
+        paths["model_dir"], "checkpoints"
+    )
+    paths["stats_path"] = paths.get("stats_path") or os.path.join(
+        paths["model_dir"], "normalization_stats.npy"
+    )
 
     cache["local_cache_dir"] = cache.get("local_cache_dir") or default_cache_dir
 
@@ -194,6 +216,7 @@ def _resolve_paths(cfg: dict) -> dict:
 # Seed
 # ============================================================================
 
+
 def set_seed(seed: int = 42):
     """Set all random seeds for reproducibility."""
     random.seed(seed)
@@ -209,20 +232,21 @@ def set_seed(seed: int = 42):
 # Data Versioning
 # ============================================================================
 
+
 def compute_data_version(
     sets_used: list,
-    split_csv_content: Optional[str] = None,
-    config: Optional[dict] = None,
+    split_csv_content: str | None = None,
+    config: dict | None = None,
 ) -> dict:
     """
     Create a data version fingerprint for reproducibility.
-    
+
     Store this in checkpoints and log to W&B.
     """
     version = {
         "sets_used": sorted(sets_used),
         "num_sets": len(sets_used),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
     # Hash the split CSV if provided
@@ -231,9 +255,13 @@ def compute_data_version(
 
     # Try to get git commit
     try:
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-        ).decode().strip()
+        commit = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
         version["git_commit"] = commit
     except (subprocess.CalledProcessError, FileNotFoundError):
         version["git_commit"] = "unknown"
@@ -251,12 +279,15 @@ def compute_data_version(
 # Device
 # ============================================================================
 
+
 def get_device() -> torch.device:
     """Get best available device."""
     if torch.cuda.is_available():
         device = torch.device("cuda")
         print(f"[Device] Using CUDA: {torch.cuda.get_device_name(0)}")
-        print(f"[Device] VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        print(
+            f"[Device] VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB"
+        )
     else:
         device = torch.device("cpu")
         print("[Device] Using CPU (AMP autocast will fall back to float32)")

@@ -10,10 +10,10 @@ These models take a single RGB (or N-channel) image as input.
 import torch
 import torch.nn as nn
 from torchvision.models import (
-    resnet50,
+    EfficientNet_B0_Weights,
     ResNet50_Weights,
     efficientnet_b0,
-    EfficientNet_B0_Weights,
+    resnet50,
 )
 
 
@@ -80,9 +80,12 @@ class RGBBackbone(nn.Module):
         """Replace ResNet conv1 for non-3-channel input."""
         old = resnet.conv1
         new_conv = nn.Conv2d(
-            in_channels, old.out_channels,
-            kernel_size=old.kernel_size, stride=old.stride,
-            padding=old.padding, bias=(old.bias is not None),
+            in_channels,
+            old.out_channels,
+            kernel_size=old.kernel_size,
+            stride=old.stride,
+            padding=old.padding,
+            bias=(old.bias is not None),
         )
         with torch.no_grad():
             if in_channels >= 3:
@@ -101,9 +104,12 @@ class RGBBackbone(nn.Module):
         """Replace EfficientNet first conv for non-3-channel input."""
         old_conv = effnet.features[0][0]
         new_conv = nn.Conv2d(
-            in_channels, old_conv.out_channels,
-            kernel_size=old_conv.kernel_size, stride=old_conv.stride,
-            padding=old_conv.padding, bias=(old_conv.bias is not None),
+            in_channels,
+            old_conv.out_channels,
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            padding=old_conv.padding,
+            bias=(old_conv.bias is not None),
         )
         with torch.no_grad():
             if in_channels >= 3:

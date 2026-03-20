@@ -9,21 +9,18 @@ Flow:
 PyTorch DataLoader with num_workers handles parallel loading and prefetching.
 """
 
-import os
-import io
 import hashlib
+import io
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import boto3
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
 from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
-
 
 # ============================================================================
 # S3 Helpers
@@ -62,7 +59,10 @@ def list_sets(bucket: str, root_prefix: str) -> list:
     try:
         resp = s3.list_objects_v2(Bucket=bucket, Prefix=root_prefix, MaxKeys=50)
         keys = {obj["Key"] for obj in resp.get("Contents", [])}
-        has_root_dataset = f"{root_prefix}labels.csv" in keys or f"{root_prefix}locations.geojson" in keys
+        has_root_dataset = (
+            f"{root_prefix}labels.csv" in keys
+            or f"{root_prefix}locations.geojson" in keys
+        )
     except Exception:
         has_root_dataset = False
 
@@ -96,13 +96,14 @@ def extract_patch_id(filename: str) -> str:
 # Simple Persistent Cache
 # ============================================================================
 
+
 class SimpleCache:
     """
     Simple persistent disk cache for S3 objects.
-    
+
     Files are downloaded once and kept forever (no eviction).
     Thread-safe for use with PyTorch DataLoader workers.
-    
+
     Files stored as: {cache_dir}/{s3_key_hash}_{filename}
     """
 
@@ -110,13 +111,17 @@ class SimpleCache:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._download_in_progress = set()  # Track ongoing downloads to avoid duplicates
-        
+        self._download_in_progress = (
+            set()
+        )  # Track ongoing downloads to avoid duplicates
+
         # Report existing cache
         existing = list(self.cache_dir.rglob("*.tif"))
         if existing:
             total_bytes = sum(f.stat().st_size for f in existing)
-            print(f"[Cache] Found {len(existing)} cached files ({total_bytes / 1e9:.1f} GB)")
+            print(
+                f"[Cache] Found {len(existing)} cached files ({total_bytes / 1e9:.1f} GB)"
+            )
 
     def _cache_path(self, s3_key: str) -> Path:
         """Deterministic local path for an S3 key."""
@@ -127,28 +132,28 @@ class SimpleCache:
     def get_or_download(self, s3_key: str, bucket: str) -> Path:
         """Get file from cache, or download if not cached. Thread-safe."""
         local_path = self._cache_path(s3_key)
-        
+
         # Fast path: already cached
         if local_path.exists():
             return local_path
-        
+
         # Slow path: need to download
         with self._lock:
             # Check again in case another thread just downloaded it
             if local_path.exists():
                 return local_path
-            
+
             # Wait if another thread is downloading this file
             while s3_key in self._download_in_progress:
                 pass  # Busy wait (rare case)
-            
+
             # Check one more time after waiting
             if local_path.exists():
                 return local_path
-            
+
             # Mark as in-progress
             self._download_in_progress.add(s3_key)
-        
+
         # Download outside the lock (allow other threads to proceed)
         tmp_path = local_path.with_suffix(".tmp")
         try:
@@ -162,7 +167,7 @@ class SimpleCache:
         finally:
             with self._lock:
                 self._download_in_progress.discard(s3_key)
-        
+
         return local_path
 
     @property
@@ -176,25 +181,26 @@ class SimpleCache:
 # Core Dataset
 # ============================================================================
 
+
 class CachedEarthScapeDataset(Dataset):
     """
     EarthScape dataset with simple local caching.
-    
+
     On __getitem__:
       1. Try to read from local cache (fast, ~1ms per file)
       2. If not cached -> download from S3 and cache (slow, first access only)
       3. Subsequent accesses read from cache
-    
+
     PyTorch DataLoader with num_workers handles parallel loading.
     """
 
     def __init__(
         self,
         bucket: str,
-        set_prefixes: List[str],
-        modalities: List[str],
+        set_prefixes: list[str],
+        modalities: list[str],
         split: str,
-        label_cols: List[str],
+        label_cols: list[str],
         cache: SimpleCache,
     ):
         self.bucket = bucket
@@ -204,13 +210,17 @@ class CachedEarthScapeDataset(Dataset):
         self.cache = cache
 
         # Build sample index
-        self.samples: List[Tuple[str, str, np.ndarray]] = []  # (set_prefix, patch_id, labels)
-        self.patch_to_keys: Dict[Tuple[str, str], Dict[str, str]] = {}
+        self.samples: list[
+            tuple[str, str, np.ndarray]
+        ] = []  # (set_prefix, patch_id, labels)
+        self.patch_to_keys: dict[tuple[str, str], dict[str, str]] = {}
 
         for sp in set_prefixes:
             self._index_set(sp)
 
-        print(f"[Dataset] {split}: {len(self.samples)} samples across {len(set_prefixes)} set(s)")
+        print(
+            f"[Dataset] {split}: {len(self.samples)} samples across {len(set_prefixes)} set(s)"
+        )
 
     def _index_set(self, set_prefix: str):
         """Build index for one set: which patches exist, which modalities, labels."""
@@ -220,7 +230,7 @@ class CachedEarthScapeDataset(Dataset):
         try:
             split_df = read_csv_from_s3(self.bucket, f"{set_prefix}split.csv")
         except Exception:
-            print(f"  ⚠ No split.csv, falling back to labels.csv (all → train)")
+            print("  ⚠ No split.csv, falling back to labels.csv (all → train)")
             split_df = read_csv_from_s3(self.bucket, f"{set_prefix}labels.csv")
             split_df["split"] = "train"
 
@@ -231,7 +241,7 @@ class CachedEarthScapeDataset(Dataset):
             return
 
         valid_ids = set(split_df["patch_id"].values)
-        patch_mods: Dict[str, Dict[str, str]] = {}
+        patch_mods: dict[str, dict[str, str]] = {}
 
         for key in list_patch_images(self.bucket, set_prefix):
             pid = extract_patch_id(key)
@@ -266,10 +276,10 @@ class CachedEarthScapeDataset(Dataset):
         modalities_dict = {}
         for mod in self.modalities:
             s3_key = mod_keys[mod]
-            
+
             # Get from cache or download
             local_path = self.cache.get_or_download(s3_key, self.bucket)
-            
+
             # Read from local disk
             image = Image.open(local_path)
             arr = np.array(image, dtype=np.float32)
@@ -288,21 +298,22 @@ class CachedEarthScapeDataset(Dataset):
 # Adapter: groups modalities into spectral + topo for the model
 # ============================================================================
 
+
 class EarthscapePatchAdapter(Dataset):
     """
     Wraps CachedEarthScapeDataset and groups modalities into either:
     - 'full' mode: spectral (4ch) and topo (7-8ch) tensors
     - 'rgb' mode: single RGB tensor (3ch)
-    
+
     Both modes support normalization with appropriate stats.
     """
 
     def __init__(
         self,
         base_dataset: CachedEarthScapeDataset,
-        spectral_modalities: Optional[List[str]] = None,
-        topo_modalities: Optional[List[str]] = None,
-        channel_stats: Optional[Dict] = None,
+        spectral_modalities: list[str] | None = None,
+        topo_modalities: list[str] | None = None,
+        channel_stats: dict | None = None,
         mode: str = "full",  # "full" or "rgb"
     ):
         self.base = base_dataset
@@ -320,16 +331,30 @@ class EarthscapePatchAdapter(Dataset):
 
         if channel_stats is not None:
             if mode == "full":
-                self.spec_mean = torch.tensor(channel_stats["spectral_mean"], dtype=torch.float32).view(-1, 1, 1)
-                self.spec_std = torch.tensor(channel_stats["spectral_std"], dtype=torch.float32).view(-1, 1, 1)
-                self.topo_mean = torch.tensor(channel_stats["topo_mean"], dtype=torch.float32).view(-1, 1, 1)
-                self.topo_std = torch.tensor(channel_stats["topo_std"], dtype=torch.float32).view(-1, 1, 1)
+                self.spec_mean = torch.tensor(
+                    channel_stats["spectral_mean"], dtype=torch.float32
+                ).view(-1, 1, 1)
+                self.spec_std = torch.tensor(
+                    channel_stats["spectral_std"], dtype=torch.float32
+                ).view(-1, 1, 1)
+                self.topo_mean = torch.tensor(
+                    channel_stats["topo_mean"], dtype=torch.float32
+                ).view(-1, 1, 1)
+                self.topo_std = torch.tensor(
+                    channel_stats["topo_std"], dtype=torch.float32
+                ).view(-1, 1, 1)
             elif mode == "rgb":
                 # Accept either rgb_mean/rgb_std or spectral_mean/spectral_std
-                mean_key = "rgb_mean" if "rgb_mean" in channel_stats else "spectral_mean"
+                mean_key = (
+                    "rgb_mean" if "rgb_mean" in channel_stats else "spectral_mean"
+                )
                 std_key = "rgb_std" if "rgb_std" in channel_stats else "spectral_std"
-                self.rgb_mean = torch.tensor(channel_stats[mean_key], dtype=torch.float32).view(-1, 1, 1)
-                self.rgb_std = torch.tensor(channel_stats[std_key], dtype=torch.float32).view(-1, 1, 1)
+                self.rgb_mean = torch.tensor(
+                    channel_stats[mean_key], dtype=torch.float32
+                ).view(-1, 1, 1)
+                self.rgb_std = torch.tensor(
+                    channel_stats[std_key], dtype=torch.float32
+                ).view(-1, 1, 1)
 
     def __len__(self):
         return len(self.base)
@@ -350,11 +375,11 @@ class EarthscapePatchAdapter(Dataset):
             # Stack individual spectral channels into image tensor
             channels = [modalities_dict[mod].squeeze(0) for mod in self.spectral_mods]
             rgb = torch.stack(channels, dim=0)  # [C, H, W]
-        
+
         # Normalize if stats provided
         if self.rgb_mean is not None:
             rgb = (rgb - self.rgb_mean) / (self.rgb_std + 1e-9)
-        
+
         return rgb, labels
 
     def _getitem_full(self, modalities_dict, labels):
@@ -377,8 +402,8 @@ class EarthscapePatchAdapter(Dataset):
                 h, w = next(iter(modalities_dict.values())).shape[-2:]
                 topo_channels.append(torch.zeros(h, w))
 
-        spec = torch.stack(spec_channels, dim=0)   # [4, H, W]
-        topo = torch.stack(topo_channels, dim=0)    # [7-8, H, W]
+        spec = torch.stack(spec_channels, dim=0)  # [4, H, W]
+        topo = torch.stack(topo_channels, dim=0)  # [7-8, H, W]
 
         # Normalize (tensors pre-computed in __init__, no allocation here)
         if self.spec_mean is not None:
@@ -392,18 +417,21 @@ class EarthscapePatchAdapter(Dataset):
 # Stats Computation (from base dataset, memory-efficient)
 # ============================================================================
 
+
 def compute_channel_stats(
     base_dataset: CachedEarthScapeDataset,
-    spectral_mods: List[str],
-    topo_mods: List[str],
+    spectral_mods: list[str],
+    topo_mods: list[str],
     n_batches: int = 500,
     batch_size: int = 32,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """
     Compute per-channel mean/std using Welford's online algorithm.
     Runs on CPU, memory-efficient.
     """
-    loader = DataLoader(base_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+    loader = DataLoader(
+        base_dataset, batch_size=batch_size, shuffle=True, num_workers=8
+    )
 
     n_spec = len(spectral_mods)
     n_topo = len(topo_mods)
@@ -415,7 +443,9 @@ def compute_channel_stats(
     total_batches = min(n_batches, len(loader))
     print(f"[Stats] Computing channel stats from {total_batches} batches...")
 
-    for i, (mods_batch, _, _) in enumerate(tqdm(loader, total=total_batches, desc="Computing stats")):
+    for i, (mods_batch, _, _) in enumerate(
+        tqdm(loader, total=total_batches, desc="Computing stats")
+    ):
         if i >= n_batches:
             break
 
@@ -428,7 +458,7 @@ def compute_channel_stats(
             bv = spec_batch.var(dim=[0, 2, 3], unbiased=False)
             delta = bm - spec_mean
             spec_mean += delta * px / (total_spec_px + px)
-            spec_m2 += bv * px + delta ** 2 * total_spec_px * px / (total_spec_px + px)
+            spec_m2 += bv * px + delta**2 * total_spec_px * px / (total_spec_px + px)
             total_spec_px += px
             del spec_batch
 
@@ -441,7 +471,7 @@ def compute_channel_stats(
             bv = topo_batch.var(dim=[0, 2, 3], unbiased=False)
             delta = bm - topo_mean
             topo_mean += delta * px / (total_topo_px + px)
-            topo_m2 += bv * px + delta ** 2 * total_topo_px * px / (total_topo_px + px)
+            topo_m2 += bv * px + delta**2 * total_topo_px * px / (total_topo_px + px)
             total_topo_px += px
             del topo_batch
 
@@ -454,51 +484,13 @@ def compute_channel_stats(
         "topo_std": torch.sqrt(topo_m2 / max(total_topo_px, 1)).numpy(),
     }
 
-    print(f"[Stats] Spectral mean={stats['spectral_mean']}, std={stats['spectral_std']}")
+    print(
+        f"[Stats] Spectral mean={stats['spectral_mean']}, std={stats['spectral_std']}"
+    )
     if n_topo > 0:
         print(f"[Stats] Topo mean={stats['topo_mean']}, std={stats['topo_std']}")
     else:
         print("[Stats] No topo channels (RGB mode)")
-    return stats
-
-
-def compute_rgb_stats(
-    base_dataset: CachedEarthScapeDataset,
-    n_batches: int = 500,
-    batch_size: int = 32,
-) -> Dict[str, np.ndarray]:
-    """
-    Compute RGB channel mean/std using Welford's online algorithm.
-    For use with RGB-only mode.
-    """
-    loader = DataLoader(base_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
-
-    rgb_mean, rgb_m2 = torch.zeros(3), torch.zeros(3)
-    total_px = 0
-
-    total_batches = min(n_batches, len(loader))
-    print(f"[Stats] Computing RGB stats from {total_batches} batches...")
-
-    for i, (mods_batch, _, _) in enumerate(tqdm(loader, total=total_batches, desc="Computing RGB stats")):
-        if i >= n_batches:
-            break
-
-        rgb_batch = mods_batch["RGB"]  # [B, 3, H, W]
-        px = rgb_batch.shape[0] * rgb_batch.shape[2] * rgb_batch.shape[3]
-        bm = rgb_batch.mean(dim=[0, 2, 3])
-        bv = rgb_batch.var(dim=[0, 2, 3], unbiased=False)
-        delta = bm - rgb_mean
-        rgb_mean += delta * px / (total_px + px)
-        rgb_m2 += bv * px + delta ** 2 * total_px * px / (total_px + px)
-        total_px += px
-        del rgb_batch, mods_batch
-
-    stats = {
-        "rgb_mean": rgb_mean.numpy(),
-        "rgb_std": torch.sqrt(rgb_m2 / total_px).numpy(),
-    }
-
-    print(f"[Stats] RGB mean={stats['rgb_mean']}, std={stats['rgb_std']}")
     return stats
 
 
@@ -509,7 +501,9 @@ def compute_pos_weights(
     device: torch.device = torch.device("cpu"),
 ) -> torch.Tensor:
     """Compute BCEWithLogitsLoss pos_weight from label distribution."""
-    loader = DataLoader(adapted_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+    loader = DataLoader(
+        adapted_dataset, batch_size=batch_size, shuffle=True, num_workers=8
+    )
 
     num_classes = None
     pos_counts = None
@@ -518,7 +512,9 @@ def compute_pos_weights(
     total_batches = min(max_batches, len(loader))
     print(f"[PosWeight] Sampling {total_batches} batches...")
 
-    for i, (_, labels) in enumerate(tqdm(loader, total=total_batches, desc="Computing pos_weights")):
+    for i, (_, labels) in enumerate(
+        tqdm(loader, total=total_batches, desc="Computing pos_weights")
+    ):
         if i >= max_batches:
             break
         batch_labels = labels.numpy()

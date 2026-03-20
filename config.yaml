@@ -21,14 +21,14 @@ data:
 # --- Caching ---
 cache:
   # Local NVMe cache directory (SageMaker g4dn has 125GB at /opt/ml/input)
-  # Locally, uses /mnt/e/earthscape/data_cache
+  # Locally, uses /home/ksathish/earthscape/data_cache
   # Files are downloaded once and kept forever (no eviction)
-  local_cache_dir: "/mnt/e/earthscape/data_cache"  # auto-detected on SM: /opt/ml/input/data_cache
+  local_cache_dir: "/home/ksathish/earthscape/data_cache"  # auto-detected on SM: /opt/ml/input/data_cache
 
 # --- Training ---
 training:
   batch_size: 32
-  num_epochs: 10
+  num_epochs: 50
   lr: 1.0e-4
   weight_decay: 1.0e-5
   num_workers: 8  # increased from 4 for better S3 download parallelism

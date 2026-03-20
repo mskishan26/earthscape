@@ -15,13 +15,13 @@ Usage:
     logits = forward_batch(model, inputs_dev, mode)
 """
 
+from typing import Dict, Union
+
 import torch
 import torch.nn as nn
-from typing import Dict, Union
 
 from models.midfusion import MidFusionResNet
 from models.rgb_backbone import RGBBackbone
-
 
 # ============================================================================
 # Registry: architecture_name -> (class, mode, default_kwargs)
@@ -87,7 +87,9 @@ def build_model(cfg: dict) -> nn.Module:
             **extra_kwargs,
         )
     elif mode == "rgb":
-        in_ch = len(cfg["_features"].get("rgb_modalities", ["aerialr", "aerialg", "aerialb"]))
+        in_ch = len(
+            cfg["_features"].get("rgb_modalities", ["aerialr", "aerialg", "aerialb"])
+        )
         model = entry["cls"](
             num_classes=model_cfg["num_classes"],
             in_channels=in_ch,
@@ -101,10 +103,10 @@ def build_model(cfg: dict) -> nn.Module:
 
 
 def prepare_inputs(
-    inputs: Union[torch.Tensor, Dict[str, torch.Tensor]],
+    inputs: torch.Tensor | dict[str, torch.Tensor],
     device: torch.device,
     mode: str,
-) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+) -> torch.Tensor | dict[str, torch.Tensor]:
     """Move batch inputs to device based on model mode."""
     if mode == "rgb":
         return inputs.to(device, non_blocking=True)
@@ -117,7 +119,7 @@ def prepare_inputs(
 
 def forward_batch(
     model: nn.Module,
-    inputs_dev: Union[torch.Tensor, Dict[str, torch.Tensor]],
+    inputs_dev: torch.Tensor | dict[str, torch.Tensor],
     mode: str,
 ) -> torch.Tensor:
     """Run model forward pass based on mode."""

@@ -15,29 +15,28 @@ Usage:
     python train.py --experiment experiments/midfusion_all.yaml --training.lr 3e-4
 """
 
-import os
 import gc
 import glob
+import os
 import time
-from typing import Dict, List
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
+from torch.utils.data import DataLoader
 
-from utils import load_config, set_seed, get_device, compute_data_version
 from dataset import (
     CachedEarthScapeDataset,
     EarthscapePatchAdapter,
     SimpleCache,
-    list_sets,
     compute_channel_stats,
     compute_pos_weights,
+    list_sets,
 )
-from torch.utils.data import DataLoader
-from models import build_model, forward_batch, prepare_inputs, get_model_mode
-from metrics import MetricsAccumulator, print_epoch_summary, evaluate
+from metrics import MetricsAccumulator, evaluate, print_epoch_summary
+from models import build_model, forward_batch, get_model_mode, prepare_inputs
+from utils import compute_data_version, get_device, load_config, set_seed
 
 
 def setup_wandb(cfg: dict) -> bool:
@@ -64,7 +63,9 @@ def setup_wandb(cfg: dict) -> bool:
             mode="online",
             reinit="finish_previous",  # Allow multiple runs in same script
         )
-        print(f"[W&B] Initialized: {run_name} (group={cfg['logging'].get('wandb_group')})")
+        print(
+            f"[W&B] Initialized: {run_name} (group={cfg['logging'].get('wandb_group')})"
+        )
         return True
     except ImportError:
         print("[W&B] wandb not installed, skipping")
@@ -79,7 +80,7 @@ def cleanup_old_checkpoints(checkpoint_dir: str, keep_top_k: int = 3):
     ckpts = sorted(
         glob.glob(os.path.join(checkpoint_dir, "epoch_*.pth")),
         key=os.path.getmtime,
-        reverse=True
+        reverse=True,
     )
     for old_ckpt in ckpts[keep_top_k:]:
         os.remove(old_ckpt)
@@ -92,34 +93,28 @@ def compute_gradient_norm(model: nn.Module) -> float:
     for p in model.parameters():
         if p.grad is not None:
             total_norm += p.grad.data.norm(2).item() ** 2
-    return total_norm ** 0.5
+    return total_norm**0.5
 
 
 def log_embedding_visualization(
     model: nn.Module,
     dataloader: DataLoader,
     device: torch.device,
-    class_names: List[str],
+    class_names: list[str],
     mode: str = "full",
     n_samples: int = 1000,
 ):
     """
-    Extract embeddings and log t-SNE/UMAP visualizations to W&B.
+    Extract embeddings and log t-SNE visualizations to W&B.
     Call at end of training for output analysis.
     """
     try:
-        import wandb
         from sklearn.manifold import TSNE
+
+        import wandb
     except ImportError:
         print("[Viz] sklearn or wandb not available, skipping embeddings")
         return
-
-    try:
-        import umap
-        HAS_UMAP = True
-    except ImportError:
-        HAS_UMAP = False
-        print("[Viz] umap not installed, using t-SNE only")
 
     print(f"[Viz] Extracting embeddings from {n_samples} samples...")
     model.eval()
@@ -128,18 +123,23 @@ def log_embedding_visualization(
     probs_list = []
 
     # Hook to capture embeddings before classifier
-    # Works for both MidFusion (has .gap) and RGBBackbone (has .backbone)
     activation = {}
-    def hook_fn(module, input, output):
-        activation['embedding'] = output.detach()
 
-    # Find a suitable hook point (GAP layer or classifier input)
-    if hasattr(model, 'gap'):
+    def hook_fn(module, input, output):
+        activation["embedding"] = output.detach()
+
+    def classifier_hook_fn(module, input, output):
+        activation["embedding"] = input[0].detach()
+
+    # Find a suitable hook point
+    # For MidFusion: hook the GAP layer output
+    # For RGBBackbone: hook the classifier input (since GAP is inside backbone)
+    if hasattr(model, "gap") and mode == "full":
+        # MidFusion case
         hook = model.gap.register_forward_hook(hook_fn)
-    elif hasattr(model, 'classifier'):
-        hook = model.classifier.register_forward_hook(
-            lambda m, inp, out: activation.update({'embedding': inp[0].detach()})
-        )
+    elif hasattr(model, "classifier"):
+        # RGBBackbone case - hook classifier input
+        hook = model.classifier.register_forward_hook(classifier_hook_fn)
     else:
         print("[Viz] Cannot find hook point for embeddings, skipping")
         return
@@ -152,7 +152,13 @@ def log_embedding_visualization(
             logits = forward_batch(model, inputs_dev, mode)
             probs = torch.sigmoid(logits)
 
-            embeddings.append(activation['embedding'].flatten(1).cpu())
+            # Check if hook captured embedding
+            if "embedding" not in activation:
+                print("[Viz] Hook failed to capture embedding, skipping visualization")
+                hook.remove()
+                return
+
+            embeddings.append(activation["embedding"].flatten(1).cpu())
             labels_list.append(labels)
             probs_list.append(probs.cpu())
 
@@ -168,26 +174,20 @@ def log_embedding_visualization(
 
     # Log t-SNE scatter plots per class
     for i, name in enumerate(class_names):
-        data = [[x, y, int(l), float(p)] for x, y, l, p in 
-                zip(tsne_emb[:, 0], tsne_emb[:, 1], labels_all[:, i], probs_all[:, i])]
+        data = [
+            [x, y, int(l), float(p)]
+            for x, y, l, p in zip(
+                tsne_emb[:, 0], tsne_emb[:, 1], labels_all[:, i], probs_all[:, i]
+            )
+        ]
         table = wandb.Table(data=data, columns=["x", "y", "label", "prob"])
-        wandb.log({f"embeddings/tsne_{name}": wandb.plot.scatter(
-            table, "x", "y", title=f"t-SNE: {name}"
-        )})
-
-    # UMAP if available
-    if HAS_UMAP:
-        print("[Viz] Running UMAP...")
-        reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
-        umap_emb = reducer.fit_transform(embeddings)
-
-        for i, name in enumerate(class_names):
-            data = [[x, y, int(l), float(p)] for x, y, l, p in 
-                    zip(umap_emb[:, 0], umap_emb[:, 1], labels_all[:, i], probs_all[:, i])]
-            table = wandb.Table(data=data, columns=["x", "y", "label", "prob"])
-            wandb.log({f"embeddings/umap_{name}": wandb.plot.scatter(
-                table, "x", "y", title=f"UMAP: {name}"
-            )})
+        wandb.log(
+            {
+                f"embeddings/tsne_{name}": wandb.plot.scatter(
+                    table, "x", "y", title=f"t-SNE: {name}"
+                )
+            }
+        )
 
     print("[Viz] Embedding visualizations logged to W&B")
 
@@ -195,10 +195,10 @@ def log_embedding_visualization(
 def build_datasets(cfg: dict):
     """
     Build train/val/test datasets with caching and prefetching.
-    
+
     Feature sets come from cfg["_features"] (set by experiment config).
     Stats are always computed fresh (never loaded from cache).
-    
+
     Returns loaders, channel stats, metadata.
     """
     data_cfg = cfg["data"]
@@ -218,7 +218,7 @@ def build_datasets(cfg: dict):
         sets_in_prefix = list_sets(bucket, base_prefix)
         print(f"[Data] Found {len(sets_in_prefix)} sets in {base_prefix}")
         all_sets.extend(sets_in_prefix)
-    
+
     max_sets = data_cfg.get("max_sets")
     if max_sets is not None:
         all_sets = all_sets[:max_sets]
@@ -236,7 +236,9 @@ def build_datasets(cfg: dict):
         spectral_mods = list(features["spectral_modalities"])
         topo_mods = list(features["topo_modalities"])
         all_modalities = spectral_mods + topo_mods
-        print(f"[Data] Full mode: {len(spectral_mods)} spectral + {len(topo_mods)} topo channels")
+        print(
+            f"[Data] Full mode: {len(spectral_mods)} spectral + {len(topo_mods)} topo channels"
+        )
 
     label_cols = data_cfg["label_cols"]
 
@@ -257,7 +259,9 @@ def build_datasets(cfg: dict):
     # Always compute normalization stats fresh (features vary per experiment)
     print("[Stats] Computing fresh normalization stats for this experiment...")
     stats = compute_channel_stats(
-        train_base, spectral_mods, topo_mods,
+        train_base,
+        spectral_mods,
+        topo_mods,
         n_batches=cfg["stats"]["num_batches"],
         batch_size=train_cfg["batch_size"],
     )
@@ -267,9 +271,15 @@ def build_datasets(cfg: dict):
     print(f"[Stats] Saved to {stats_path}")
 
     # Adapted datasets (grouped + normalized)
-    train_adapted = EarthscapePatchAdapter(train_base, spectral_mods, topo_mods, stats, mode=mode)
-    val_adapted = EarthscapePatchAdapter(val_base, spectral_mods, topo_mods, stats, mode=mode)
-    test_adapted = EarthscapePatchAdapter(test_base, spectral_mods, topo_mods, stats, mode=mode)
+    train_adapted = EarthscapePatchAdapter(
+        train_base, spectral_mods, topo_mods, stats, mode=mode
+    )
+    val_adapted = EarthscapePatchAdapter(
+        val_base, spectral_mods, topo_mods, stats, mode=mode
+    )
+    test_adapted = EarthscapePatchAdapter(
+        test_base, spectral_mods, topo_mods, stats, mode=mode
+    )
 
     # Standard PyTorch DataLoaders (handles prefetching via num_workers)
     loader_kwargs = {
@@ -277,14 +287,24 @@ def build_datasets(cfg: dict):
         "num_workers": train_cfg["num_workers"],
         "pin_memory": train_cfg["pin_memory"],
         "prefetch_factor": train_cfg["prefetch_factor"],
-        "persistent_workers": train_cfg["persistent_workers"] and train_cfg["num_workers"] > 0,
+        "persistent_workers": train_cfg["persistent_workers"]
+        and train_cfg["num_workers"] > 0,
     }
 
     train_loader = DataLoader(train_adapted, shuffle=True, **loader_kwargs)
     val_loader = DataLoader(val_adapted, shuffle=False, **loader_kwargs)
     test_loader = DataLoader(test_adapted, shuffle=False, **loader_kwargs)
 
-    return train_loader, val_loader, test_loader, stats, all_sets, topo_mods, spectral_mods, cache
+    return (
+        train_loader,
+        val_loader,
+        test_loader,
+        stats,
+        all_sets,
+        topo_mods,
+        spectral_mods,
+        cache,
+    )
 
 
 def save_checkpoint(
@@ -293,8 +313,8 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     scaler: GradScaler,
     epoch: int,
-    val_metrics: Dict,
-    train_metrics: Dict,
+    val_metrics: dict,
+    train_metrics: dict,
     cfg: dict,
     stats: dict,
     data_version: dict,
@@ -305,7 +325,11 @@ def save_checkpoint(
         "model_state": model.state_dict(),
         "optimizer_state": optimizer.state_dict(),
         "scaler_state": scaler.state_dict(),
-        "val_metrics": {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in val_metrics.items() if k != "per_class_confusion"},
+        "val_metrics": {
+            k: v.tolist() if isinstance(v, np.ndarray) else v
+            for k, v in val_metrics.items()
+            if k != "per_class_confusion"
+        },
         "train_loss": train_metrics["loss"],
         "config": cfg,
         "normalization_stats": stats,
@@ -324,10 +348,20 @@ def train(cfg: dict):
 
     # Data
     print("\n[Data] Building datasets...")
-    (train_loader, val_loader, test_loader, stats,
-     all_sets, topo_mods, spectral_mods, cache) = build_datasets(cfg)
+    (
+        train_loader,
+        val_loader,
+        test_loader,
+        stats,
+        all_sets,
+        topo_mods,
+        spectral_mods,
+        cache,
+    ) = build_datasets(cfg)
 
-    print(f"[Data] Train: {len(train_loader.dataset)} | Val: {len(val_loader.dataset)} | Test: {len(test_loader.dataset)}")
+    print(
+        f"[Data] Train: {len(train_loader.dataset)} | Val: {len(val_loader.dataset)} | Test: {len(test_loader.dataset)}"
+    )
 
     # Data version
     data_version = compute_data_version(all_sets, config=cfg)
@@ -356,7 +390,10 @@ def train(cfg: dict):
     sched_cfg = cfg["scheduler"]
     if sched_cfg["type"] == "reduce_on_plateau":
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=sched_cfg["factor"], patience=sched_cfg["patience"]
+            optimizer,
+            mode="min",
+            factor=sched_cfg["factor"],
+            patience=sched_cfg["patience"],
         )
     elif sched_cfg["type"] == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -384,13 +421,18 @@ def train(cfg: dict):
             scaler.load_state_dict(ckpt["scaler_state"])
         start_epoch = ckpt["epoch"] + 1
         best_val_loss = ckpt["val_metrics"]["loss"]
-        print(f"[Resume] Resuming from epoch {start_epoch}, best val loss: {best_val_loss:.4f}")
+        print(
+            f"[Resume] Resuming from epoch {start_epoch}, best val loss: {best_val_loss:.4f}"
+        )
 
     # Metric history
     history = {
-        "train_loss": [], "val_loss": [],
-        "train_macro_f1": [], "val_macro_f1": [],
-        "train_acc": [], "val_acc": [],
+        "train_loss": [],
+        "val_loss": [],
+        "train_macro_f1": [],
+        "val_macro_f1": [],
+        "train_acc": [],
+        "val_acc": [],
         "lr": [],
     }
 
@@ -402,9 +444,9 @@ def train(cfg: dict):
     # ========================
     # Training Loop
     # ========================
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Starting training: {num_epochs} epochs")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     for epoch in range(start_epoch, num_epochs + 1):
         epoch_start = time.time()
@@ -424,17 +466,21 @@ def train(cfg: dict):
                 loss = criterion(logits, labels_dev)
 
             scaler.scale(loss).backward()
-            
+
             # Compute gradient norm before optimizer step
             grad_norm = compute_gradient_norm(model)
-            
+
             scaler.step(optimizer)
             scaler.update()
 
-            train_acc.update(logits, labels_dev, loss=loss.item(), batch_size=labels.size(0))
+            train_acc.update(
+                logits, labels_dev, loss=loss.item(), batch_size=labels.size(0)
+            )
 
             if batch_idx % log_every == 0:
-                print(f"  [Train] Epoch {epoch} | Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item():.4f} | GradNorm: {grad_norm:.2f}")
+                print(
+                    f"  [Train] Epoch {epoch} | Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item():.4f} | GradNorm: {grad_norm:.2f}"
+                )
 
         train_metrics = train_acc.compute(class_names=class_names)
 
@@ -451,7 +497,9 @@ def train(cfg: dict):
                     logits = forward_batch(model, inputs_dev, mode)
                     loss = criterion(logits, labels_dev)
 
-                val_acc.update(logits, labels_dev, loss=loss.item(), batch_size=labels.size(0))
+                val_acc.update(
+                    logits, labels_dev, loss=loss.item(), batch_size=labels.size(0)
+                )
 
         val_metrics = val_acc.compute(class_names=class_names)
 
@@ -464,7 +512,9 @@ def train(cfg: dict):
 
         # --- Logging ---
         epoch_time = time.time() - epoch_start
-        print_epoch_summary(epoch, num_epochs, train_metrics, val_metrics, current_lr, class_names)
+        print_epoch_summary(
+            epoch, num_epochs, train_metrics, val_metrics, current_lr, class_names
+        )
         print(f"  Epoch time: {epoch_time:.1f}s | Cache: {cache.size_gb:.1f} GB")
 
         history["train_loss"].append(train_metrics["loss"])
@@ -477,35 +527,47 @@ def train(cfg: dict):
 
         # Compute throughput
         samples_per_sec = len(train_loader.dataset) / epoch_time
-        
+
         if wandb_active:
             import wandb
-            
-            wandb.log({
-                "epoch": epoch,
-                # Train metrics
-                "train/loss": train_metrics["loss"],
-                "train/macro_f1": train_metrics["macro_f1"],
-                "train/accuracy": train_metrics["avg_accuracy"],
-                "train/hamming_loss": train_metrics.get("hamming_loss", 0),
-                "train/macro_auc": train_metrics.get("macro_auc", 0),
-                "train/grad_norm": grad_norm,
-                # Val metrics
-                "val/loss": val_metrics["loss"],
-                "val/macro_f1": val_metrics["macro_f1"],
-                "val/accuracy": val_metrics["avg_accuracy"],
-                "val/exact_match": val_metrics["exact_match_accuracy"],
-                "val/hamming_loss": val_metrics.get("hamming_loss", 0),
-                "val/macro_auc": val_metrics.get("macro_auc", 0),
-                # Training info
-                "lr": current_lr,
-                "epoch_time_s": epoch_time,
-                "throughput/samples_per_sec": samples_per_sec,
-                # Per-class metrics
-                **{f"val/f1_{name}": val_metrics["per_class_f1"][i] for i, name in enumerate(class_names)},
-                **{f"val/acc_{name}": val_metrics["per_class_accuracy"][i] for i, name in enumerate(class_names)},
-                **{f"val/auc_{name}": val_metrics["per_class_auc"][i] for i, name in enumerate(class_names)},
-            }, step=epoch)
+
+            wandb.log(
+                {
+                    "epoch": epoch,
+                    # Train metrics
+                    "train/loss": train_metrics["loss"],
+                    "train/macro_f1": train_metrics["macro_f1"],
+                    "train/accuracy": train_metrics["avg_accuracy"],
+                    "train/hamming_loss": train_metrics.get("hamming_loss", 0),
+                    "train/macro_auc": train_metrics.get("macro_auc", 0),
+                    "train/grad_norm": grad_norm,
+                    # Val metrics
+                    "val/loss": val_metrics["loss"],
+                    "val/macro_f1": val_metrics["macro_f1"],
+                    "val/accuracy": val_metrics["avg_accuracy"],
+                    "val/exact_match": val_metrics["exact_match_accuracy"],
+                    "val/hamming_loss": val_metrics.get("hamming_loss", 0),
+                    "val/macro_auc": val_metrics.get("macro_auc", 0),
+                    # Training info
+                    "lr": current_lr,
+                    "epoch_time_s": epoch_time,
+                    "throughput/samples_per_sec": samples_per_sec,
+                    # Per-class metrics
+                    **{
+                        f"val/f1_{name}": val_metrics["per_class_f1"][i]
+                        for i, name in enumerate(class_names)
+                    },
+                    **{
+                        f"val/acc_{name}": val_metrics["per_class_accuracy"][i]
+                        for i, name in enumerate(class_names)
+                    },
+                    **{
+                        f"val/auc_{name}": val_metrics["per_class_auc"][i]
+                        for i, name in enumerate(class_names)
+                    },
+                },
+                step=epoch,
+            )
 
         # --- Checkpointing ---
         if val_metrics["loss"] < best_val_loss - cfg["early_stopping"]["min_delta"]:
@@ -513,8 +575,16 @@ def train(cfg: dict):
             epochs_no_improve = 0
 
             save_checkpoint(
-                best_ckpt_path, model, optimizer, scaler,
-                epoch, val_metrics, train_metrics, cfg, stats, data_version,
+                best_ckpt_path,
+                model,
+                optimizer,
+                scaler,
+                epoch,
+                val_metrics,
+                train_metrics,
+                cfg,
+                stats,
+                data_version,
             )
             print(f"  ✔ Saved best checkpoint (val_loss={best_val_loss:.4f})")
         else:
@@ -525,11 +595,22 @@ def train(cfg: dict):
         if epoch % cfg["checkpoint"]["save_every_n_epochs"] == 0:
             periodic_path = os.path.join(paths["checkpoint_dir"], f"epoch_{epoch}.pth")
             save_checkpoint(
-                periodic_path, model, optimizer, scaler,
-                epoch, val_metrics, train_metrics, cfg, stats, data_version,
+                periodic_path,
+                model,
+                optimizer,
+                scaler,
+                epoch,
+                val_metrics,
+                train_metrics,
+                cfg,
+                stats,
+                data_version,
             )
             # Cleanup old checkpoints (keep top K)
-            cleanup_old_checkpoints(paths["checkpoint_dir"], keep_top_k=cfg["checkpoint"].get("keep_top_k", 3))
+            cleanup_old_checkpoints(
+                paths["checkpoint_dir"],
+                keep_top_k=cfg["checkpoint"].get("keep_top_k", 3),
+            )
 
         # Early stopping
         if epochs_no_improve >= es_patience:
@@ -546,8 +627,16 @@ def train(cfg: dict):
     # ========================
     final_path = os.path.join(paths["model_dir"], "final_model.pth")
     save_checkpoint(
-        final_path, model, optimizer, scaler,
-        epoch, val_metrics, train_metrics, cfg, stats, data_version,
+        final_path,
+        model,
+        optimizer,
+        scaler,
+        epoch,
+        val_metrics,
+        train_metrics,
+        cfg,
+        stats,
+        data_version,
     )
     print(f"\n[Save] Final model saved to {final_path}")
 
@@ -558,9 +647,9 @@ def train(cfg: dict):
     # ========================
     # Test Set Evaluation
     # ========================
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Test Set Evaluation")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Load best checkpoint for test eval
     if os.path.exists(best_ckpt_path):
@@ -584,49 +673,61 @@ def train(cfg: dict):
 
     if wandb_active:
         import wandb
-        
+
         # Log test metrics
-        wandb.log({
-            "test/loss": test_metrics["loss"],
-            "test/macro_f1": test_metrics["macro_f1"],
-            "test/micro_f1": test_metrics["micro_f1"],
-            "test/accuracy": test_metrics["avg_accuracy"],
-            "test/exact_match": test_metrics["exact_match_accuracy"],
-            "test/hamming_loss": test_metrics.get("hamming_loss", 0),
-            "test/macro_auc": test_metrics.get("macro_auc", 0),
-            **{f"test/f1_{name}": test_metrics["per_class_f1"][i] for i, name in enumerate(class_names)},
-            **{f"test/auc_{name}": test_metrics["per_class_auc"][i] for i, name in enumerate(class_names)},
-        })
-        
+        wandb.log(
+            {
+                "test/loss": test_metrics["loss"],
+                "test/macro_f1": test_metrics["macro_f1"],
+                "test/micro_f1": test_metrics["micro_f1"],
+                "test/accuracy": test_metrics["avg_accuracy"],
+                "test/exact_match": test_metrics["exact_match_accuracy"],
+                "test/hamming_loss": test_metrics.get("hamming_loss", 0),
+                "test/macro_auc": test_metrics.get("macro_auc", 0),
+                **{
+                    f"test/f1_{name}": test_metrics["per_class_f1"][i]
+                    for i, name in enumerate(class_names)
+                },
+                **{
+                    f"test/auc_{name}": test_metrics["per_class_auc"][i]
+                    for i, name in enumerate(class_names)
+                },
+            }
+        )
+
         # Log confusion matrices
         if "per_class_confusion" in test_metrics:
             for name, cm in test_metrics["per_class_confusion"].items():
                 tn, fp, fn, tp = cm.ravel()
-                wandb.log({
-                    f"confusion/{name}_tn": tn,
-                    f"confusion/{name}_fp": fp,
-                    f"confusion/{name}_fn": fn,
-                    f"confusion/{name}_tp": tp,
-                })
-        
+                wandb.log(
+                    {
+                        f"confusion/{name}_tn": tn,
+                        f"confusion/{name}_fp": fp,
+                        f"confusion/{name}_fn": fn,
+                        f"confusion/{name}_tp": tp,
+                    }
+                )
+
         # Log model artifact
         artifact = wandb.Artifact(f"model-{wandb.run.id}", type="model")
         artifact.add_file(final_path)
         wandb.log_artifact(artifact)
         print("[W&B] Model artifact logged")
-        
+
         # Log embedding visualizations if enabled
         if cfg["logging"].get("log_embeddings", True):
-            log_embedding_visualization(model, test_loader, device, class_names, mode=mode)
-        
+            log_embedding_visualization(
+                model, test_loader, device, class_names, mode=mode
+            )
+
         wandb.finish()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Training complete!")
     print(f"  Best val loss: {best_val_loss:.4f}")
     print(f"  Test Macro-F1: {test_metrics['macro_f1']:.4f}")
     print(f"  Artifacts: {paths['model_dir']}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     return model, history, test_metrics
 
@@ -640,13 +741,17 @@ if __name__ == "__main__":
 
     # Validate that experiment config is present
     if "_features" not in cfg:
-        print("[ERROR] No experiment config found. Use --experiment <path> to specify one.")
+        print(
+            "[ERROR] No experiment config found. Use --experiment <path> to specify one."
+        )
         print("  Example: python train.py --experiment experiments/midfusion_all.yaml")
-        print(f"  Available: experiments/*.yaml")
-        import sys; sys.exit(1)
+        print("  Available: experiments/*.yaml")
+        import sys
+
+        sys.exit(1)
 
     exp = cfg.get("_experiment", {})
-    print(f"\n[Config] Resolved config:")
+    print("\n[Config] Resolved config:")
     print(f"  Experiment: {exp.get('name', 'N/A')}")
     print(f"  Architecture: {cfg['model']['architecture']}")
     print(f"  Mode: {cfg['_features']['mode']}")

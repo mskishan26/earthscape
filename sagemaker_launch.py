@@ -27,17 +27,14 @@ def launch():
         role=role,
         instance_type="ml.g4dn.xlarge",
         instance_count=1,
-        framework_version="2.1",          # Updated from 1.9!
-        py_version="py310",               # Updated from py38!
+        framework_version="2.1",  # Updated from 1.9!
+        py_version="py310",  # Updated from py38!
         base_job_name="earthscape-midfusion",
-        
         # --- Critical: S3 output path ---
         output_path=f"s3://{bucket}/model-artifacts/",
-        
         # --- Continuous checkpoint sync ---
         checkpoint_s3_uri=f"s3://{bucket}/checkpoints/",
         checkpoint_local_path="/opt/ml/checkpoints",
-        
         # --- Hyperparameters (override config.yaml values) ---
         hyperparameters={
             "training.num_epochs": 10,
@@ -47,12 +44,10 @@ def launch():
             "logging.use_wandb": "true",
             "data.max_sets": "null",  # Use all sets
         },
-
         # --- Environment variables ---
         environment={
             "WANDB_API_KEY": "YOUR_KEY_HERE",  # Or use SM secrets
         },
-
         # --- Metric definitions for SM console ---
         metric_definitions=[
             {"Name": "train:loss", "Regex": r"Train — Loss: ([0-9.]+)"},
@@ -60,7 +55,6 @@ def launch():
             {"Name": "val:macro_f1", "Regex": r"Val   — .* Macro-F1: ([0-9.]+)"},
             {"Name": "test:macro_f1", "Regex": r"Test Macro-F1: ([0-9.]+)"},
         ],
-
         # Max runtime (seconds) - 24 hours
         max_run=86400,
     )

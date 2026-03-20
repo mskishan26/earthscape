@@ -9,12 +9,11 @@ wandb/
 outputs/
 data_cache/
 outputs1/
+.ruff_cache/
 
 # Virtual environments
 .venv
 
 # Random files
-s3_check.py
 split.csv
 locations.geojson
-dataset_org.py

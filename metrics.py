@@ -8,32 +8,28 @@ Key design decisions:
   - Evaluation function works both inline (end of training) and standalone
 """
 
-import os
-from typing import Dict, List, Optional, Tuple
-
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 from sklearn.metrics import (
+    confusion_matrix,
     f1_score,
+    hamming_loss,
     precision_score,
     recall_score,
-    classification_report,
-    confusion_matrix,
     roc_auc_score,
-    hamming_loss,
 )
-
+from torch.utils.data import DataLoader
 
 # ============================================================================
 # GPU-Friendly Metrics
 # ============================================================================
 
+
 class MetricsAccumulator:
     """
     Accumulate predictions and labels across batches on CPU.
-    
+
     Usage:
         acc = MetricsAccumulator()
         for batch in loader:
@@ -43,12 +39,18 @@ class MetricsAccumulator:
     """
 
     def __init__(self):
-        self.all_logits: List[torch.Tensor] = []
-        self.all_labels: List[torch.Tensor] = []
+        self.all_logits: list[torch.Tensor] = []
+        self.all_labels: list[torch.Tensor] = []
         self.running_loss = 0.0
         self.n_samples = 0
 
-    def update(self, logits: torch.Tensor, labels: torch.Tensor, loss: Optional[float] = None, batch_size: int = 0):
+    def update(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        loss: float | None = None,
+        batch_size: int = 0,
+    ):
         """
         Store batch predictions. Moves to CPU immediately to free GPU.
         """
@@ -58,7 +60,7 @@ class MetricsAccumulator:
             self.running_loss += loss * (batch_size or logits.size(0))
             self.n_samples += batch_size or logits.size(0)
 
-    def compute(self, class_names: Optional[List[str]] = None) -> Dict:
+    def compute(self, class_names: list[str] | None = None) -> dict:
         """Compute all metrics from accumulated predictions."""
         logits = torch.cat(self.all_logits, dim=0)
         labels = torch.cat(self.all_labels, dim=0)
@@ -79,8 +81,12 @@ class MetricsAccumulator:
         per_class_f1 = f1_score(labels_np, preds_np, average=None, zero_division=0)
         macro_f1 = f1_score(labels_np, preds_np, average="macro", zero_division=0)
         micro_f1 = f1_score(labels_np, preds_np, average="micro", zero_division=0)
-        per_class_precision = precision_score(labels_np, preds_np, average=None, zero_division=0)
-        per_class_recall = recall_score(labels_np, preds_np, average=None, zero_division=0)
+        per_class_precision = precision_score(
+            labels_np, preds_np, average=None, zero_division=0
+        )
+        per_class_recall = recall_score(
+            labels_np, preds_np, average=None, zero_division=0
+        )
 
         # Hamming loss
         hamming = hamming_loss(labels_np, preds_np)
@@ -133,24 +139,29 @@ class MetricsAccumulator:
 # Pretty Printing
 # ============================================================================
 
+
 def print_epoch_summary(
     epoch: int,
     total_epochs: int,
-    train_metrics: Dict,
-    val_metrics: Dict,
+    train_metrics: dict,
+    val_metrics: dict,
     lr: float,
-    class_names: List[str],
+    class_names: list[str],
 ):
     """Print formatted epoch summary."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Epoch {epoch}/{total_epochs} | LR: {lr:.2e}")
-    print(f"{'='*60}")
-    print(f"  Train — Loss: {train_metrics['loss']:.4f} | Acc: {train_metrics['avg_accuracy']:.4f} | Macro-F1: {train_metrics['macro_f1']:.4f}")
-    print(f"  Val   — Loss: {val_metrics['loss']:.4f} | Acc: {val_metrics['avg_accuracy']:.4f} | Macro-F1: {val_metrics['macro_f1']:.4f}")
+    print(f"{'=' * 60}")
+    print(
+        f"  Train — Loss: {train_metrics['loss']:.4f} | Acc: {train_metrics['avg_accuracy']:.4f} | Macro-F1: {train_metrics['macro_f1']:.4f}"
+    )
+    print(
+        f"  Val   — Loss: {val_metrics['loss']:.4f} | Acc: {val_metrics['avg_accuracy']:.4f} | Macro-F1: {val_metrics['macro_f1']:.4f}"
+    )
     print(f"  Val Exact Match: {val_metrics['exact_match_accuracy']:.4f}")
 
     print(f"\n  {'Class':<8} {'Acc':>6} {'F1':>6} {'Prec':>6} {'Rec':>6}")
-    print(f"  {'-'*34}")
+    print(f"  {'-' * 34}")
     for i, name in enumerate(class_names):
         print(
             f"  {name:<8} "
@@ -165,27 +176,28 @@ def print_epoch_summary(
 # Evaluation (Test Set)
 # ============================================================================
 
+
 @torch.no_grad()
 def evaluate(
     model: nn.Module,
     dataloader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-    class_names: List[str],
+    class_names: list[str],
     use_amp: bool = True,
     mode: str = "full",
-) -> Dict:
+) -> dict:
     """
     Run full evaluation on a dataset split.
-    
+
     Used both at end of training (test set) and as standalone via evaluate.py.
-    
+
     Args:
         mode: "full" (spectral+topo dict) or "rgb" (single tensor).
-    
+
     Returns comprehensive metrics dict.
     """
-    from models import prepare_inputs, forward_batch
+    from models import forward_batch, prepare_inputs
 
     model.eval()
     acc = MetricsAccumulator()
@@ -194,7 +206,9 @@ def evaluate(
         inputs_dev = prepare_inputs(inputs, device, mode)
         labels_dev = labels.to(device, non_blocking=True)
 
-        with torch.amp.autocast(device_type=device.type, enabled=use_amp and device.type == "cuda"):
+        with torch.amp.autocast(
+            device_type=device.type, enabled=use_amp and device.type == "cuda"
+        ):
             logits = forward_batch(model, inputs_dev, mode)
             loss = criterion(logits, labels_dev)
 
@@ -206,9 +220,9 @@ def evaluate(
     metrics = acc.compute(class_names=class_names)
 
     # Print detailed report
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Evaluation Results")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Loss: {metrics['loss']:.4f}")
     print(f"  Avg Accuracy: {metrics['avg_accuracy']:.4f}")
     print(f"  Exact Match Accuracy: {metrics['exact_match_accuracy']:.4f}")
@@ -216,7 +230,7 @@ def evaluate(
     print(f"  Micro F1: {metrics['micro_f1']:.4f}")
 
     print(f"\n  {'Class':<8} {'Acc':>6} {'F1':>6} {'Prec':>6} {'Rec':>6}")
-    print(f"  {'-'*34}")
+    print(f"  {'-' * 34}")
     for i, name in enumerate(class_names):
         print(
             f"  {name:<8} "
@@ -228,7 +242,7 @@ def evaluate(
 
     # Print confusion matrices
     if "per_class_confusion" in metrics:
-        print(f"\n  Per-Class Confusion Matrices (TN, FP, FN, TP):")
+        print("\n  Per-Class Confusion Matrices (TN, FP, FN, TP):")
         for name, cm in metrics["per_class_confusion"].items():
             tn, fp, fn, tp = cm.ravel()
             print(f"  {name:<8} TN={tn:>5} FP={fp:>5} FN={fn:>5} TP={tp:>5}")
