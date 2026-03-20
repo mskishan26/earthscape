@@ -111,9 +111,7 @@ class SimpleCache:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._download_in_progress = (
-            set()
-        )  # Track ongoing downloads to avoid duplicates
+        self._download_in_progress: dict[str, threading.Event] = {}  # Track ongoing downloads
 
         # Report existing cache
         existing = list(self.cache_dir.rglob("*.tif"))
@@ -139,20 +137,20 @@ class SimpleCache:
 
         # Slow path: need to download
         with self._lock:
-            # Check again in case another thread just downloaded it
             if local_path.exists():
                 return local_path
 
-            # Wait if another thread is downloading this file
-            while s3_key in self._download_in_progress:
-                pass  # Busy wait (rare case)
-
-            # Check one more time after waiting
-            if local_path.exists():
-                return local_path
+            # Another thread is already downloading this key — wait for it
+            if s3_key in self._download_in_progress:
+                event = self._download_in_progress[s3_key]
+                self._lock.release()
+                event.wait()
+                self._lock.acquire()
+                if local_path.exists():
+                    return local_path
 
             # Mark as in-progress
-            self._download_in_progress.add(s3_key)
+            self._download_in_progress[s3_key] = threading.Event()
 
         # Download outside the lock (allow other threads to proceed)
         tmp_path = local_path.with_suffix(".tmp")
@@ -166,7 +164,9 @@ class SimpleCache:
             raise
         finally:
             with self._lock:
-                self._download_in_progress.discard(s3_key)
+                event = self._download_in_progress.pop(s3_key, None)
+                if event:
+                    event.set()
 
         return local_path
 
