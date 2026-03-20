@@ -1,0 +1,19 @@
+# ============================================================================
+# Experiment: MidFusion V3 (Static Gating) — All spectral + topo features
+# ============================================================================
+# Usage: python train.py --experiment experiments/midfusion_v3_all.yaml
+#
+# Adds two learnable gate scalars (alpha, beta) that weight branch residuals
+# into the fused signal. Fully interpretable — inspect gate values post-training.
+
+name: midfusion_v3
+description: "MidFusion V3 (static gating) with all spectral + topo features"
+
+model:
+  architecture: midfusion_v3
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full  # full | rgb

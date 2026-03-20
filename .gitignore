@@ -17,3 +17,4 @@ outputs1/
 # Random files
 split.csv
 locations.geojson
+fusion_variants.py

@@ -376,7 +376,11 @@ def train(cfg: dict):
     print(f"[Model] {arch} ({mode} mode): {param_count:.1f}M parameters")
 
     # Loss
-    pos_weight = compute_pos_weights(train_loader.dataset, device=device)
+    pos_weight = compute_pos_weights(
+        train_loader.dataset,
+        device=device,
+        max_weight=cfg["training"].get("max_pos_weight", 10.0),
+    )
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # Optimizer

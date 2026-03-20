@@ -35,6 +35,7 @@ training:
   pin_memory: true
   prefetch_factor: 4  # increased from 2 for better prefetching (8 workers * 4 batches = 32 batches ahead)
   persistent_workers: true
+  max_pos_weight: 10.0  # clamp pos_weight to prevent rare classes from dominating loss
 
 # --- Model (defaults, overridden by experiment) ---
 model:

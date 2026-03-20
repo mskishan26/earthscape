@@ -1,0 +1,19 @@
+# ============================================================================
+# Experiment: MidFusion V4 (Conditioned Gating, SE-style) — All spectral + topo features
+# ============================================================================
+# Usage: python train.py --experiment experiments/midfusion_v4_all.yaml
+#
+# Adds an SE-style gate MLP that produces per-sample gate values for each
+# branch. Learns *when* each modality matters, not just how much on average.
+
+name: midfusion_v4
+description: "MidFusion V4 (conditioned SE-style gating) with all spectral + topo features"
+
+model:
+  architecture: midfusion_v4
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full  # full | rgb

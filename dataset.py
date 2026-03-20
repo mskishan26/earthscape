@@ -499,6 +499,7 @@ def compute_pos_weights(
     max_batches: int = 500,
     batch_size: int = 64,
     device: torch.device = torch.device("cpu"),
+    max_weight: float = 10.0,
 ) -> torch.Tensor:
     """Compute BCEWithLogitsLoss pos_weight from label distribution."""
     loader = DataLoader(
@@ -525,7 +526,8 @@ def compute_pos_weights(
         total += batch_labels.shape[0]
 
     neg_counts = total - pos_counts
-    weights = (neg_counts / (pos_counts + 1e-9)).astype(np.float32)
+    raw_weights = (neg_counts / (pos_counts + 1e-9)).astype(np.float32)
+    weights = np.clip(raw_weights, 1.0, max_weight)
 
-    print(f"[PosWeight] Samples: {total}, pos_weight: {weights}")
+    print(f"[PosWeight] Samples: {total}, raw: {raw_weights}, clamped (max={max_weight}): {weights}")
     return torch.from_numpy(weights).to(device)

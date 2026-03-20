@@ -21,6 +21,8 @@ import torch
 import torch.nn as nn
 
 from models.midfusion import MidFusionResNet
+from models.midfusion_v3 import MidFusionResNet_V3
+from models.midfusion_v4 import MidFusionResNet_V4
 from models.rgb_backbone import RGBBackbone
 
 # ============================================================================
@@ -31,6 +33,14 @@ MODEL_REGISTRY = {
     # Full mode (spectral + topo)
     "midfusion": {
         "cls": MidFusionResNet,
+        "mode": "full",
+    },
+    "midfusion_v3": {
+        "cls": MidFusionResNet_V3,
+        "mode": "full",
+    },
+    "midfusion_v4": {
+        "cls": MidFusionResNet_V4,
         "mode": "full",
     },
     # RGB mode (single image backbone)
