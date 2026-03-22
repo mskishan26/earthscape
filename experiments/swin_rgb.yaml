@@ -1,0 +1,15 @@
+# ============================================================================
+# Experiment: Swin Transformer Tiny — RGB aerial imagery only
+# ============================================================================
+# Usage: python train.py --experiment experiments/swin_rgb.yaml
+
+name: swin_rgb
+description: "Swin Transformer Tiny on RGB aerial imagery (no topo, no NIR)"
+
+model:
+  architecture: swin_t
+  dropout: 0.3
+
+features:
+  rgb_modalities: ["aerialr", "aerialg", "aerialb"]
+  mode: rgb

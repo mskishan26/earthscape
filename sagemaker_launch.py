@@ -1,68 +1,179 @@
 """
-SageMaker Launch Script
+SageMaker Launch Script  (SDK v3 — ModelTrainer API)
 
-This is a placeholder — we'll flesh this out together once the training
-code is validated locally on your RTX 4060.
+Launches one training job per experiment YAML in experiments/.
+Each job runs on its own spot instance in parallel.
 
-Key things to configure:
-  - output_path: where model artifacts go in S3
-  - checkpoint_s3_uri: continuous checkpoint sync
-  - hyperparameters: flow through to config overrides
-  - instance_type: ml.g4dn.xlarge (T4, 16GB) or ml.g5.xlarge (A10G, 24GB)
+Usage:
+    # Launch all experiments
+    python sagemaker_launch.py
+
+    # Launch a single experiment
+    python sagemaker_launch.py --experiment experiments/midfusion_all.yaml
+
+    # Override instance type
+    python sagemaker_launch.py --instance-type ml.g5.xlarge
+
+    # Use on-demand instead of spot
+    python sagemaker_launch.py --no-spot
 """
 
-import sagemaker
-from sagemaker.pytorch import PyTorch
+import argparse
+import glob
+import os
+from pathlib import Path
+
+import yaml
+from sagemaker.core import image_uris
+from sagemaker.core.helper.session_helper import Session, get_execution_role
+from sagemaker.core.shapes.shapes import (
+    CheckpointConfig,
+    OutputDataConfig,
+    StoppingCondition,
+)
+from sagemaker.core.training.configs import Compute, SourceCode
+from sagemaker.train.model_trainer import ModelTrainer
+
+
+BUCKET = "earthscape-dataset"
+OUTPUT_PREFIX = "sagemaker-outputs"
+CHECKPOINT_PREFIX = "sagemaker-checkpoints"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Launch SageMaker training jobs")
+    parser.add_argument(
+        "--experiment",
+        default=None,
+        help="Single experiment YAML to run (default: all in experiments/)",
+    )
+    parser.add_argument(
+        "--instance-type",
+        default="ml.g4dn.xlarge",
+        help="SageMaker instance type (default: ml.g4dn.xlarge)",
+    )
+    parser.add_argument(
+        "--max-run-hours",
+        type=int,
+        default=24,
+        help="Max runtime per job in hours (default: 24)",
+    )
+    parser.add_argument(
+        "--no-spot",
+        action="store_true",
+        help="Disable spot instances (use on-demand)",
+    )
+    parser.add_argument(
+        "--wandb-api-key",
+        default=os.environ.get("WANDB_API_KEY", ""),
+        help="W&B API key (reads WANDB_API_KEY env var by default)",
+    )
+    return parser.parse_args()
+
+
+def get_experiment_name(path: str) -> str:
+    """Read experiment name from YAML, fall back to filename stem."""
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f).get("name", Path(path).stem)
+    except Exception:
+        return Path(path).stem
 
 
 def launch():
-    session = sagemaker.Session()
-    role = sagemaker.get_execution_role()
+    args = parse_args()
 
-    bucket = "deeplearning-midterm-data"
+    if args.experiment:
+        experiment_files = [args.experiment]
+    else:
+        experiment_files = sorted(glob.glob("experiments/*.yaml"))
+    if not experiment_files:
+        print("No experiment YAMLs found in experiments/")
+        return
 
-    estimator = PyTorch(
-        entry_point="train.py",
-        source_dir="./resnet_midfusion",
-        role=role,
-        instance_type="ml.g4dn.xlarge",
-        instance_count=1,
-        framework_version="2.1",  # Updated from 1.9!
-        py_version="py310",  # Updated from py38!
-        base_job_name="earthscape-midfusion",
-        # --- Critical: S3 output path ---
-        output_path=f"s3://{bucket}/model-artifacts/",
-        # --- Continuous checkpoint sync ---
-        checkpoint_s3_uri=f"s3://{bucket}/checkpoints/",
-        checkpoint_local_path="/opt/ml/checkpoints",
-        # --- Hyperparameters (override config.yaml values) ---
-        hyperparameters={
-            "training.num_epochs": 10,
-            "training.batch_size": 32,
-            "training.lr": "1e-4",
-            "amp.enabled": "true",
-            "logging.use_wandb": "true",
-            "data.max_sets": "null",  # Use all sets
-        },
-        # --- Environment variables ---
-        environment={
-            "WANDB_API_KEY": "YOUR_KEY_HERE",  # Or use SM secrets
-        },
-        # --- Metric definitions for SM console ---
-        metric_definitions=[
-            {"Name": "train:loss", "Regex": r"Train — Loss: ([0-9.]+)"},
-            {"Name": "val:loss", "Regex": r"Val   — Loss: ([0-9.]+)"},
-            {"Name": "val:macro_f1", "Regex": r"Val   — .* Macro-F1: ([0-9.]+)"},
-            {"Name": "test:macro_f1", "Regex": r"Test Macro-F1: ([0-9.]+)"},
-        ],
-        # Max runtime (seconds) - 24 hours
-        max_run=86400,
+    session = Session()
+    role = get_execution_role()
+    region = session.boto_region_name
+
+    # Resolve the PyTorch training image for the target instance
+    training_image = image_uris.retrieve(
+        framework="pytorch",
+        region=region,
+        version="2.5",
+        py_version="py311",
+        instance_type=args.instance_type,
+        image_scope="training",
     )
 
-    print("Launching training job...")
-    estimator.fit(wait=False)  # Don't block - monitor in SM console
-    print(f"Job name: {estimator.latest_training_job.name}")
-    print(f"Output: s3://{bucket}/model-artifacts/")
+    use_spot = not args.no_spot
+    max_run_seconds = args.max_run_hours * 3600
+    max_wait_seconds = max_run_seconds + 3600 if use_spot else None
+    spot_label = "SPOT" if use_spot else "ON-DEMAND"
+
+    print(f"Found {len(experiment_files)} experiments")
+    print(f"Instance: {args.instance_type} ({spot_label})")
+    print(f"Image:    {training_image}\n")
+
+    jobs = []
+    for exp_file in experiment_files:
+        exp_name = get_experiment_name(exp_file)
+
+        trainer = ModelTrainer(
+            sagemaker_session=session,
+            role=role,
+            training_image=training_image,
+            base_job_name=f"es-{exp_name}",
+            source_code=SourceCode(
+                source_dir=".",
+                entry_script="train.py",
+                requirements="requirements.txt",
+                ignore_patterns=[
+                    ".venv",
+                    ".git",
+                    ".ruff_cache",
+                    "__pycache__",
+                    "data_cache",
+                    "outputs",
+                    "wandb",
+                    "standalone_scripts",
+                    "*.html",
+                    "uv.lock",
+                ],
+            ),
+            compute=Compute(
+                instance_type=args.instance_type,
+                instance_count=1,
+                enable_managed_spot_training=use_spot,
+            ),
+            stopping_condition=StoppingCondition(
+                max_runtime_in_seconds=max_run_seconds,
+                max_wait_time_in_seconds=max_wait_seconds,
+            ),
+            output_data_config=OutputDataConfig(
+                s3_output_path=f"s3://{BUCKET}/{OUTPUT_PREFIX}/",
+            ),
+            checkpoint_config=CheckpointConfig(
+                s3_uri=f"s3://{BUCKET}/{CHECKPOINT_PREFIX}/{exp_name}/",
+                local_path="/opt/ml/checkpoints",
+            ),
+            hyperparameters={"experiment": exp_file},
+            environment={"WANDB_API_KEY": args.wandb_api_key},
+        )
+
+        if not trainer:
+            print(f"  Failed to create trainer for: {exp_name}")
+            continue
+
+        trainer.train(wait=False)
+        job_name = trainer._latest_training_job.training_job_name
+        jobs.append((exp_name, job_name))
+        print(f"  Launched: {exp_name:30s} -> {job_name}")
+
+    print(f"\n{'='*60}")
+    print(f"Launched {len(jobs)} jobs")
+    print(f"Output:      s3://{BUCKET}/{OUTPUT_PREFIX}/")
+    print(f"Checkpoints: s3://{BUCKET}/{CHECKPOINT_PREFIX}/")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":

@@ -10,10 +10,14 @@ These models take a single RGB (or N-channel) image as input.
 import torch
 import torch.nn as nn
 from torchvision.models import (
+    ConvNeXt_Tiny_Weights,
     EfficientNet_B0_Weights,
     ResNet50_Weights,
+    Swin_T_Weights,
+    convnext_tiny,
     efficientnet_b0,
     resnet50,
+    swin_t,
 )
 
 
@@ -24,6 +28,8 @@ class RGBBackbone(nn.Module):
     Supports:
       - resnet50: ImageNet-pretrained ResNet-50
       - efficientnet_b0: ImageNet-pretrained EfficientNet-B0
+      - convnext_tiny: ImageNet-pretrained ConvNeXt-Tiny
+      - swin_t: ImageNet-pretrained Swin Transformer Tiny
 
     Args:
         backbone: architecture name ("resnet50" or "efficientnet_b0")
@@ -64,6 +70,26 @@ class RGBBackbone(nn.Module):
             self.gap = nn.AdaptiveAvgPool2d((1, 1))
             self._use_gap = False  # EfficientNet already has avgpool
 
+        elif backbone == "convnext_tiny":
+            base = convnext_tiny(weights=ConvNeXt_Tiny_Weights.DEFAULT)
+            if in_channels != 3:
+                base = self._adapt_convnext_conv1(base, in_channels)
+            feat_dim = base.classifier[2].in_features  # 768
+            base.classifier = nn.Identity()
+            self.backbone = base
+            self.gap = nn.AdaptiveAvgPool2d((1, 1))
+            self._use_gap = False  # ConvNeXt already has avgpool
+
+        elif backbone == "swin_t":
+            base = swin_t(weights=Swin_T_Weights.DEFAULT)
+            if in_channels != 3:
+                base = self._adapt_swin_conv1(base, in_channels)
+            feat_dim = base.head.in_features  # 768
+            base.head = nn.Identity()
+            self.backbone = base
+            self.gap = nn.AdaptiveAvgPool2d((1, 1))
+            self._use_gap = False  # Swin already has avgpool
+
         else:
             raise ValueError(f"Unsupported backbone: {backbone}")
 
@@ -98,6 +124,54 @@ class RGBBackbone(nn.Module):
                 new_conv.weight[:, :in_channels] = old.weight[:, :in_channels]
         resnet.conv1 = new_conv
         return resnet
+
+    @staticmethod
+    def _adapt_convnext_conv1(model, in_channels: int):
+        """Replace ConvNeXt first conv for non-3-channel input."""
+        old_conv = model.features[0][0]
+        new_conv = nn.Conv2d(
+            in_channels,
+            old_conv.out_channels,
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            padding=old_conv.padding,
+            bias=(old_conv.bias is not None),
+        )
+        with torch.no_grad():
+            if in_channels >= 3:
+                new_conv.weight[:, :3] = old_conv.weight
+                if in_channels > 3:
+                    mean_rgb = old_conv.weight.mean(dim=1, keepdim=True)
+                    for c in range(3, in_channels):
+                        new_conv.weight[:, c : c + 1] = mean_rgb * 0.1
+            else:
+                new_conv.weight[:, :in_channels] = old_conv.weight[:, :in_channels]
+        model.features[0][0] = new_conv
+        return model
+
+    @staticmethod
+    def _adapt_swin_conv1(model, in_channels: int):
+        """Replace Swin Transformer patch embedding conv for non-3-channel input."""
+        old_conv = model.features[0][0]
+        new_conv = nn.Conv2d(
+            in_channels,
+            old_conv.out_channels,
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            padding=old_conv.padding,
+            bias=(old_conv.bias is not None),
+        )
+        with torch.no_grad():
+            if in_channels >= 3:
+                new_conv.weight[:, :3] = old_conv.weight
+                if in_channels > 3:
+                    mean_rgb = old_conv.weight.mean(dim=1, keepdim=True)
+                    for c in range(3, in_channels):
+                        new_conv.weight[:, c : c + 1] = mean_rgb * 0.1
+            else:
+                new_conv.weight[:, :in_channels] = old_conv.weight[:, :in_channels]
+        model.features[0][0] = new_conv
+        return model
 
     @staticmethod
     def _adapt_effnet_conv1(effnet, in_channels: int):

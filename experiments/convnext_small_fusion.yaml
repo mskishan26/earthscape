@@ -1,0 +1,20 @@
+# ============================================================================
+# Experiment: ConvNeXt-Small Dual-Backbone Mid-Fusion — All spectral + topo
+# ============================================================================
+# Usage: python train.py --experiment experiments/convnext_small_fusion.yaml
+#
+# Same architecture as convnext_fusion but with ConvNeXt-Small (~50M params)
+# instead of ConvNeXt-Tiny (~28M). Same stage dims [96, 192, 384, 768],
+# so mid-fusion at stage-2 (384ch) works identically — just deeper stages.
+
+name: convnext_small_fusion
+description: "ConvNeXt-Small dual-backbone mid-fusion with all spectral + topo features"
+
+model:
+  architecture: convnext_small_fusion
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full

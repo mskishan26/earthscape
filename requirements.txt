@@ -1,0 +1,7 @@
+# Only packages NOT already in the SageMaker PyTorch container.
+# torch, torchvision, numpy, pillow, boto3, tqdm, pyyaml are pre-installed.
+timm>=1.0.25
+wandb>=0.25.0
+scikit-learn>=1.8.0
+pyproj>=3.7.2
+pandas>=3.0.1

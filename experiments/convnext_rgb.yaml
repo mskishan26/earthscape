@@ -1,0 +1,15 @@
+# ============================================================================
+# Experiment: ConvNeXt-Tiny — RGB aerial imagery only
+# ============================================================================
+# Usage: python train.py --experiment experiments/convnext_rgb.yaml
+
+name: convnext_rgb
+description: "ConvNeXt-Tiny on RGB aerial imagery (no topo, no NIR)"
+
+model:
+  architecture: convnext_tiny
+  dropout: 0.3
+
+features:
+  rgb_modalities: ["aerialr", "aerialg", "aerialb"]
+  mode: rgb

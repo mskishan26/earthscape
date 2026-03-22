@@ -1,0 +1,20 @@
+# ============================================================================
+# Experiment: DeiT3-Small Early Fusion — All spectral + topo as single input
+# ============================================================================
+# Usage: python train.py --experiment experiments/deit_early_fusion.yaml
+#
+# Concatenates spectral (4ch) + topo (7ch) = 11-channel input into a single
+# DeiT3-Small backbone. Self-attention learns cross-modal relationships
+# implicitly across patches — no dual-backbone overhead.
+
+name: deit_early_fusion
+description: "DeiT3-Small early fusion (11ch input) with all spectral + topo features"
+
+model:
+  architecture: deit_early_fusion
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full

@@ -23,6 +23,8 @@ import torch.nn as nn
 from models.midfusion import MidFusionResNet
 from models.midfusion_v3 import MidFusionResNet_V3
 from models.midfusion_v4 import MidFusionResNet_V4
+from models.deit import DeiTBackbone, DeiTEarlyFusion, DeiTLateFusion
+from models.modern_fusion import ModernMidFusion, ModernMidFusion_Gated
 from models.rgb_backbone import RGBBackbone
 
 # ============================================================================
@@ -53,6 +55,61 @@ MODEL_REGISTRY = {
         "cls": RGBBackbone,
         "mode": "rgb",
         "kwargs": {"backbone": "efficientnet_b0"},
+    },
+    "convnext_tiny": {
+        "cls": RGBBackbone,
+        "mode": "rgb",
+        "kwargs": {"backbone": "convnext_tiny"},
+    },
+    "swin_t": {
+        "cls": RGBBackbone,
+        "mode": "rgb",
+        "kwargs": {"backbone": "swin_t"},
+    },
+    # Full mode — modern backbones (spectral + topo)
+    "convnext_fusion": {
+        "cls": ModernMidFusion,
+        "mode": "full",
+        "kwargs": {"backbone": "convnext_tiny"},
+    },
+    "swin_fusion": {
+        "cls": ModernMidFusion,
+        "mode": "full",
+        "kwargs": {"backbone": "swin_t"},
+    },
+    "convnext_fusion_gated": {
+        "cls": ModernMidFusion_Gated,
+        "mode": "full",
+        "kwargs": {"backbone": "convnext_tiny"},
+    },
+    "swin_fusion_gated": {
+        "cls": ModernMidFusion_Gated,
+        "mode": "full",
+        "kwargs": {"backbone": "swin_t"},
+    },
+    # DeiT (Data-efficient Image Transformer)
+    "deit_small": {
+        "cls": DeiTBackbone,
+        "mode": "rgb",
+    },
+    "deit_fusion": {
+        "cls": DeiTLateFusion,
+        "mode": "full",
+    },
+    "deit_early_fusion": {
+        "cls": DeiTEarlyFusion,
+        "mode": "full",
+    },
+    # ConvNeXt-Small variants
+    "convnext_small_fusion": {
+        "cls": ModernMidFusion,
+        "mode": "full",
+        "kwargs": {"backbone": "convnext_small"},
+    },
+    "convnext_small_fusion_gated": {
+        "cls": ModernMidFusion_Gated,
+        "mode": "full",
+        "kwargs": {"backbone": "convnext_small"},
     },
 }
 

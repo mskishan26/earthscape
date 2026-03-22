@@ -1,0 +1,15 @@
+# ============================================================================
+# Experiment: DeiT3-Small — RGB aerial imagery only
+# ============================================================================
+# Usage: python train.py --experiment experiments/deit_rgb.yaml
+
+name: deit_rgb
+description: "DeiT3-Small (Data-efficient Image Transformer) on RGB aerial imagery"
+
+model:
+  architecture: deit_small
+  dropout: 0.3
+
+features:
+  rgb_modalities: ["aerialr", "aerialg", "aerialb"]
+  mode: rgb

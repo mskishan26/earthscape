@@ -1,0 +1,16 @@
+# ============================================================================
+# Experiment: Swin-T Dual-Backbone Gated Mid-Fusion — All spectral + topo
+# ============================================================================
+# Usage: python train.py --experiment experiments/swin_fusion_gated.yaml
+
+name: swin_fusion_gated
+description: "Swin Transformer Tiny dual-backbone with SE-style gated mid-fusion"
+
+model:
+  architecture: swin_fusion_gated
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full

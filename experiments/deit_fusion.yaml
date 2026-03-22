@@ -1,0 +1,16 @@
+# ============================================================================
+# Experiment: DeiT3-Small Dual-Backbone Late Fusion — All spectral + topo
+# ============================================================================
+# Usage: python train.py --experiment experiments/deit_fusion.yaml
+
+name: deit_fusion
+description: "DeiT3-Small dual-backbone late fusion with all spectral + topo features"
+
+model:
+  architecture: deit_fusion
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full

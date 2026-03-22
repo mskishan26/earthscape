@@ -1,0 +1,16 @@
+# ============================================================================
+# Experiment: Swin-T Dual-Backbone Mid-Fusion — All spectral + topo
+# ============================================================================
+# Usage: python train.py --experiment experiments/swin_fusion.yaml
+
+name: swin_fusion
+description: "Swin Transformer Tiny dual-backbone mid-fusion with all spectral + topo features"
+
+model:
+  architecture: swin_fusion
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full
