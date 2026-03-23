@@ -24,6 +24,15 @@ from torchvision.models import (
     convnext_tiny,
     swin_t,
 )
+from torchvision.ops.stochastic_depth import StochasticDepth
+
+
+
+class LayerNorm2d(nn.LayerNorm):
+    """LayerNorm for channels-first tensors [B, C, H, W]."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return super().forward(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
 
 # ============================================================================
@@ -94,6 +103,14 @@ def _forward_final_stage(model, x: torch.Tensor) -> torch.Tensor:
     return x
 
 
+def _set_drop_path_rate(backbone: nn.Module, rate: float):
+    """Rescale stochastic depth to a linear schedule [0 → rate] across blocks."""
+    sd_layers = [m for m in backbone.modules() if isinstance(m, StochasticDepth)]
+    n = len(sd_layers)
+    for i, layer in enumerate(sd_layers):
+        layer.p = rate * (i + 1) / n
+
+
 # ============================================================================
 # ModernMidFusion: ConvNeXt/Swin dual-backbone with mid-level fusion
 # ============================================================================
@@ -121,6 +138,7 @@ class ModernMidFusion(nn.Module):
         spectral_in_ch: int = 4,
         topo_in_ch: int = 7,
         dropout: float = 0.3,
+        drop_path_rate: float = 0.0,
     ):
         super().__init__()
         self.backbone_name = backbone
@@ -140,8 +158,8 @@ class ModernMidFusion(nn.Module):
         # Fusion: concat stage-2 outputs (384+384) → 1x1 conv → 384
         self.fusion = nn.Sequential(
             nn.Conv2d(mid_ch * 2, mid_ch, kernel_size=1, bias=False),
-            nn.BatchNorm2d(mid_ch),
-            nn.ReLU(inplace=True),
+            LayerNorm2d(mid_ch),
+            nn.GELU(),
         )
 
         # Shared final stage (from spectral backbone)
@@ -150,14 +168,18 @@ class ModernMidFusion(nn.Module):
             [self.spec_backbone.features[6], self.spec_backbone.features[7]]
         )
 
-        # Classifier
+        # Stochastic depth for finetuning
+        if drop_path_rate > 0:
+            _set_drop_path_rate(self.spec_backbone, drop_path_rate)
+            _set_drop_path_rate(self.topo_backbone, drop_path_rate)
+
+        # Classifier (ConvNeXt finetuning recipe: single linear + head_init_scale)
         self.gap = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Sequential(
-            nn.Linear(final_ch, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(512, num_classes),
-        )
+        self.head_drop = nn.Dropout(dropout)
+        self.classifier = nn.Linear(final_ch, num_classes)
+        with torch.no_grad():
+            self.classifier.weight.mul_(0.001)
+            self.classifier.bias.mul_(0.001)
 
     def _forward_branches(
         self, spectral: torch.Tensor, topo: torch.Tensor
@@ -202,7 +224,7 @@ class ModernMidFusion(nn.Module):
             fused = fused.permute(0, 3, 1, 2).contiguous()
 
         out = self.gap(fused).flatten(1)  # [B, 768]
-        return self.classifier(out)
+        return self.classifier(self.head_drop(out))
 
 
 # ============================================================================
@@ -234,6 +256,7 @@ class ModernMidFusion_Gated(nn.Module):
         topo_in_ch: int = 7,
         dropout: float = 0.3,
         gate_bottleneck: int = 64,
+        drop_path_rate: float = 0.0,
     ):
         super().__init__()
         self.backbone_name = backbone
@@ -253,8 +276,8 @@ class ModernMidFusion_Gated(nn.Module):
         # Fusion conv
         self.fusion = nn.Sequential(
             nn.Conv2d(mid_ch * 2, mid_ch, kernel_size=1, bias=False),
-            nn.BatchNorm2d(mid_ch),
-            nn.ReLU(inplace=True),
+            LayerNorm2d(mid_ch),
+            nn.GELU(),
         )
 
         # Conditioned gate MLP
@@ -273,14 +296,18 @@ class ModernMidFusion_Gated(nn.Module):
             [self.spec_backbone.features[6], self.spec_backbone.features[7]]
         )
 
-        # Classifier
+        # Stochastic depth for finetuning
+        if drop_path_rate > 0:
+            _set_drop_path_rate(self.spec_backbone, drop_path_rate)
+            _set_drop_path_rate(self.topo_backbone, drop_path_rate)
+
+        # Classifier (ConvNeXt finetuning recipe: single linear + head_init_scale)
         self.gap = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Sequential(
-            nn.Linear(final_ch, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(512, num_classes),
-        )
+        self.head_drop = nn.Dropout(dropout)
+        self.classifier = nn.Linear(final_ch, num_classes)
+        with torch.no_grad():
+            self.classifier.weight.mul_(0.001)
+            self.classifier.bias.mul_(0.001)
 
     def _to_channels_first(self, x: torch.Tensor) -> torch.Tensor:
         """Swin [B, H, W, C] → [B, C, H, W]."""
@@ -334,7 +361,7 @@ class ModernMidFusion_Gated(nn.Module):
             fused = self._to_channels_first(fused)
 
         out = self.gap(fused).flatten(1)  # [B, 768]
-        return self.classifier(out)
+        return self.classifier(self.head_drop(out))
 
     def get_gate_values(
         self, spectral: torch.Tensor, topo: torch.Tensor

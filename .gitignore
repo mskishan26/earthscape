@@ -10,6 +10,7 @@ outputs/
 data_cache/
 outputs1/
 .ruff_cache/
+standalone_scripts/eda_plots/
 
 # Virtual environments
 .venv

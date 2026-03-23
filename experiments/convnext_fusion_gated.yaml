@@ -9,6 +9,7 @@ description: "ConvNeXt-Tiny dual-backbone with SE-style gated mid-fusion"
 model:
   architecture: convnext_fusion_gated
   dropout: 0.3
+  drop_path_rate: 0.4
 
 features:
   spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]

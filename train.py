@@ -36,6 +36,7 @@ from dataset import (
 )
 from metrics import MetricsAccumulator, evaluate, print_epoch_summary
 from models import build_model, forward_batch, get_model_mode, prepare_inputs
+from models.deit import build_deit_llrd_param_groups
 from utils import compute_data_version, get_device, load_config, set_seed
 
 
@@ -384,11 +385,21 @@ def train(cfg: dict):
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # Optimizer
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=cfg["training"]["lr"],
-        weight_decay=cfg["training"]["weight_decay"],
-    )
+    llrd_decay = cfg["model"].get("llrd_decay", 0.0)
+    if llrd_decay > 0 and arch.startswith("deit"):
+        param_groups = build_deit_llrd_param_groups(
+            model,
+            base_lr=cfg["training"]["lr"],
+            weight_decay=cfg["training"]["weight_decay"],
+            llrd_decay=llrd_decay,
+        )
+        optimizer = torch.optim.Adam(param_groups)
+    else:
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=cfg["training"]["lr"],
+            weight_decay=cfg["training"]["weight_decay"],
+        )
 
     # Scheduler
     sched_cfg = cfg["scheduler"]

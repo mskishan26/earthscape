@@ -1,0 +1,21 @@
+# ============================================================================
+# Experiment: DeiT3-Small Late Fusion — with stochastic depth regularization
+# ============================================================================
+# Usage: python train.py --experiment experiments/deit_fusion_drop_path.yaml
+#
+# Same as deit_fusion but with drop_path_rate=0.15 for regularization.
+# DeiT-Small typically uses 0.1-0.2; we pick 0.15 as a starting point
+# (lower than ConvNeXt's 0.4 since ViTs are more sensitive to drop path).
+
+name: deit_fusion_drop_path
+description: "DeiT3-Small late fusion with drop_path_rate=0.15"
+
+model:
+  architecture: deit_fusion
+  dropout: 0.3
+  drop_path_rate: 0.15
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full

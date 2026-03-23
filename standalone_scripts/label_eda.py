@@ -8,7 +8,11 @@ import argparse
 import sys
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import pandas as pd
+import seaborn as sns
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from dataset import _get_s3_client, list_sets, read_csv_from_s3
@@ -150,6 +154,108 @@ def load_splits_from_s3(bucket, set_prefixes):
     return combined_df
 
 
+def save_plots(df, output_dir="eda_plots"):
+    """Generate and save presentation-ready plots to output_dir."""
+    label_cols = ["af1", "Qal", "Qaf", "Qat", "Qc", "Qca", "Qr"]
+    out = Path(output_dir)
+    out.mkdir(exist_ok=True)
+
+    sns.set_theme(style="whitegrid", font_scale=1.2)
+
+    # 1. Label frequency bar chart
+    fig, ax = plt.subplots(figsize=(8, 5))
+    freqs = {l: int((df[l] == 1.0).sum()) for l in label_cols}
+    bars = ax.bar(freqs.keys(), freqs.values(), color="steelblue", edgecolor="black")
+    ax.bar_label(bars, fmt="%d", fontsize=10)
+    ax.set_title("Label Frequency (Positive Count)")
+    ax.set_ylabel("Count")
+    ax.set_xlabel("Label")
+    fig.tight_layout()
+    fig.savefig(out / "label_frequency.png", dpi=200)
+    plt.close(fig)
+
+    # 2. Labels-per-patch distribution
+    fig, ax = plt.subplots(figsize=(7, 5))
+    lpp = df[label_cols].sum(axis=1)
+    counts = lpp.value_counts().sort_index()
+    bars = ax.bar(counts.index.astype(int).astype(str), counts.values, color="coral", edgecolor="black")
+    ax.bar_label(bars, fmt="%d", fontsize=10)
+    ax.set_title("Distribution of Labels per Patch")
+    ax.set_xlabel("Number of Labels")
+    ax.set_ylabel("Patch Count")
+    fig.tight_layout()
+    fig.savefig(out / "labels_per_patch.png", dpi=200)
+    plt.close(fig)
+
+    # 3. Co-occurrence heatmap
+    cooc = pd.DataFrame(0, index=label_cols, columns=label_cols)
+    for i, l1 in enumerate(label_cols):
+        for j, l2 in enumerate(label_cols):
+            if i <= j:
+                val = int(((df[l1] == 1.0) & (df[l2] == 1.0)).sum())
+                cooc.loc[l1, l2] = val
+                cooc.loc[l2, l1] = val
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.heatmap(cooc, annot=True, fmt="d", cmap="YlOrRd", linewidths=0.5, ax=ax)
+    ax.set_title("Label Co-occurrence Matrix")
+    fig.tight_layout()
+    fig.savefig(out / "cooccurrence_heatmap.png", dpi=200)
+    plt.close(fig)
+
+    # 4. Top 10 label combinations (horizontal bar)
+    combos = df[label_cols].apply(tuple, axis=1)
+    top10 = combos.value_counts().head(10)
+    labels_str = [
+        ", ".join(label_cols[i] for i, v in enumerate(c) if v == 1.0) or "None"
+        for c in top10.index
+    ]
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.barh(labels_str[::-1], top10.values[::-1], color="mediumseagreen", edgecolor="black")
+    ax.set_title("Top 10 Label Combinations")
+    ax.set_xlabel("Count")
+    fig.tight_layout()
+    fig.savefig(out / "top_combinations.png", dpi=200)
+    plt.close(fig)
+
+    # 5. Class imbalance ratio
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ratios = {}
+    for l in label_cols:
+        pos = (df[l] == 1.0).sum()
+        neg = (df[l] == 0.0).sum()
+        ratios[l] = neg / pos if pos > 0 else float("inf")
+    bars = ax.bar(ratios.keys(), ratios.values(), color="salmon", edgecolor="black")
+    ax.bar_label(bars, fmt="%.1f", fontsize=10)
+    ax.set_title("Class Imbalance Ratio (Negative / Positive)")
+    ax.set_ylabel("Ratio")
+    ax.set_xlabel("Label")
+    fig.tight_layout()
+    fig.savefig(out / "imbalance_ratio.png", dpi=200)
+    plt.close(fig)
+
+    # 6. Split distribution pie chart
+    if "split" in df.columns:
+        fig, ax = plt.subplots(figsize=(6, 6))
+        split_counts = df["split"].value_counts().sort_index()
+        ax.pie(
+            split_counts.values,
+            labels=split_counts.index,
+            autopct="%1.1f%%",
+            colors=["#66b3ff", "#99ff99", "#ff9999", "#ffcc99"],
+            startangle=90,
+            textprops={"fontsize": 12},
+        )
+        ax.set_title("Split Distribution", fontsize=14)
+        fig.tight_layout()
+        fig.savefig(out / "split_distribution.png", dpi=200)
+        plt.close(fig)
+
+    saved = list(out.glob("*.png"))
+    print(f"\n>> Saved {len(saved)} plots to {out.resolve()}/")
+    for f in sorted(saved):
+        print(f"   - {f.name}")
+
+
 def main():
     """Main function to run the EDA"""
     parser = argparse.ArgumentParser(
@@ -202,6 +308,10 @@ def main():
 
     # Overall dataset analysis
     analyze_labels(df, "Overall")
+
+    # Generate and save plots
+    plot_dir = str(Path(__file__).parent / "eda_plots")
+    save_plots(df, output_dir=plot_dir)
 
     # Per-split analysis
     splits = df["split"].unique()

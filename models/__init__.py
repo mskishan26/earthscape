@@ -23,7 +23,7 @@ import torch.nn as nn
 from models.midfusion import MidFusionResNet
 from models.midfusion_v3 import MidFusionResNet_V3
 from models.midfusion_v4 import MidFusionResNet_V4
-from models.deit import DeiTBackbone, DeiTEarlyFusion, DeiTLateFusion
+from models.deit import DeiTBackbone, DeiTEarlyFusion, DeiTLateFusion, DeiTLateFusion_Gated
 from models.modern_fusion import ModernMidFusion, ModernMidFusion_Gated
 from models.rgb_backbone import RGBBackbone
 
@@ -100,6 +100,10 @@ MODEL_REGISTRY = {
         "cls": DeiTEarlyFusion,
         "mode": "full",
     },
+    "deit_fusion_gated": {
+        "cls": DeiTLateFusion_Gated,
+        "mode": "full",
+    },
     # ConvNeXt-Small variants
     "convnext_small_fusion": {
         "cls": ModernMidFusion,
@@ -142,6 +146,10 @@ def build_model(cfg: dict) -> nn.Module:
 
     mode = entry["mode"]
     extra_kwargs = entry.get("kwargs", {})
+
+    # Optional model params — only forwarded when present in config
+    if "drop_path_rate" in model_cfg:
+        extra_kwargs = {**extra_kwargs, "drop_path_rate": model_cfg["drop_path_rate"]}
 
     if mode == "full":
         spectral_ch = len(cfg["_features"]["spectral_modalities"])

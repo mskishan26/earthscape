@@ -1,0 +1,22 @@
+# ============================================================================
+# Experiment: DeiT3-Small Gated Late Fusion — per-sample modality weighting
+# ============================================================================
+# Usage: python train.py --experiment experiments/deit_fusion_gated.yaml
+#
+# Adds a lightweight gate MLP on the concatenated CLS tokens to produce
+# per-sample scalar weights for spectral vs topo branches.
+# Includes drop_path_rate=0.15 based on deit_fusion_drop_path findings.
+# Use model.get_gate_values() after training to inspect learned modality preferences.
+
+name: deit_fusion_gated
+description: "DeiT3-Small gated late fusion with per-sample modality weighting"
+
+model:
+  architecture: deit_fusion_gated
+  dropout: 0.3
+  drop_path_rate: 0.0
+  
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full

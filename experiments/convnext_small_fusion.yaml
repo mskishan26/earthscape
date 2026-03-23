@@ -13,6 +13,7 @@ description: "ConvNeXt-Small dual-backbone mid-fusion with all spectral + topo f
 model:
   architecture: convnext_small_fusion
   dropout: 0.3
+  drop_path_rate: 0.4
 
 features:
   spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]

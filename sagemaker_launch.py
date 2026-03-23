@@ -114,60 +114,65 @@ def launch():
     print(f"Instance: {args.instance_type} ({spot_label})")
     print(f"Image:    {training_image}\n")
 
+    # Shared source code config (uploaded once per job)
+    source_code = SourceCode(
+        source_dir=".",
+        entry_script="train.py",
+        requirements="requirements.txt",
+        ignore_patterns=[
+            ".venv",
+            ".git",
+            ".ruff_cache",
+            "__pycache__",
+            "data_cache",
+            "outputs",
+            "wandb",
+            "standalone_scripts",
+            "*.html",
+            "uv.lock",
+        ],
+    )
+
+    # Stopping condition — only set max_wait when using spot
+    stopping = StoppingCondition(max_runtime_in_seconds=max_run_seconds)
+    if use_spot:
+        stopping.max_wait_time_in_seconds = max_wait_seconds
+
     jobs = []
     for exp_file in experiment_files:
         exp_name = get_experiment_name(exp_file)
 
-        trainer = ModelTrainer(
-            sagemaker_session=session,
-            role=role,
-            training_image=training_image,
-            base_job_name=f"es-{exp_name}",
-            source_code=SourceCode(
-                source_dir=".",
-                entry_script="train.py",
-                requirements="requirements.txt",
-                ignore_patterns=[
-                    ".venv",
-                    ".git",
-                    ".ruff_cache",
-                    "__pycache__",
-                    "data_cache",
-                    "outputs",
-                    "wandb",
-                    "standalone_scripts",
-                    "*.html",
-                    "uv.lock",
-                ],
-            ),
-            compute=Compute(
-                instance_type=args.instance_type,
-                instance_count=1,
-                enable_managed_spot_training=use_spot,
-            ),
-            stopping_condition=StoppingCondition(
-                max_runtime_in_seconds=max_run_seconds,
-                max_wait_time_in_seconds=max_wait_seconds,
-            ),
-            output_data_config=OutputDataConfig(
-                s3_output_path=f"s3://{BUCKET}/{OUTPUT_PREFIX}/",
-            ),
-            checkpoint_config=CheckpointConfig(
-                s3_uri=f"s3://{BUCKET}/{CHECKPOINT_PREFIX}/{exp_name}/",
-                local_path="/opt/ml/checkpoints",
-            ),
-            hyperparameters={"experiment": exp_file},
-            environment={"WANDB_API_KEY": args.wandb_api_key},
-        )
+        try:
+            trainer = ModelTrainer(
+                sagemaker_session=session,
+                role=role,
+                training_image=training_image,
+                base_job_name=f"es-{exp_name}",
+                source_code=source_code,
+                compute=Compute(
+                    instance_type=args.instance_type,
+                    instance_count=1,
+                    enable_managed_spot_training=use_spot,
+                ),
+                stopping_condition=stopping,
+                output_data_config=OutputDataConfig(
+                    s3_output_path=f"s3://{BUCKET}/{OUTPUT_PREFIX}/",
+                ),
+                checkpoint_config=CheckpointConfig(
+                    s3_uri=f"s3://{BUCKET}/{CHECKPOINT_PREFIX}/{exp_name}/",
+                    local_path="/opt/ml/checkpoints",
+                ),
+                hyperparameters={"experiment": exp_file},
+                environment={"WANDB_API_KEY": args.wandb_api_key},
+            )
 
-        if not trainer:
-            print(f"  Failed to create trainer for: {exp_name}")
-            continue
+            trainer.train(wait=False)
+            job_name = trainer._latest_training_job.training_job_name
+            jobs.append((exp_name, job_name))
+            print(f"  Launched: {exp_name:30s} -> {job_name}")
 
-        trainer.train(wait=False)
-        job_name = trainer._latest_training_job.training_job_name
-        jobs.append((exp_name, job_name))
-        print(f"  Launched: {exp_name:30s} -> {job_name}")
+        except Exception as e:
+            print(f"  FAILED:   {exp_name:30s} -> {e}")
 
     print(f"\n{'='*60}")
     print(f"Launched {len(jobs)} jobs")

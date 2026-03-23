@@ -1,0 +1,20 @@
+# ============================================================================
+# Experiment: DeiT3-Small Late Fusion V2 — simplified classifier head
+# ============================================================================
+# Usage: python train.py --experiment experiments/deit_fusion_v2.yaml
+#
+# Same as deit_fusion but with single nn.Linear classifier + 0.001 init scale
+# + dropout before head (matching ConvNeXt finetuning recipe from modern_fusion.py).
+# No LLRD — isolates the effect of the classifier head change.
+
+name: deit_fusion_v2
+description: "DeiT3-Small late fusion with simplified classifier head (single linear + 0.001 init)"
+
+model:
+  architecture: deit_fusion
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full
