@@ -1,0 +1,17 @@
+# ============================================================================
+# ConvNeXt-Tiny Dual-Backbone Mid-Fusion
+# ============================================================================
+# python train.py --experiment experiments/convnext_fusion.yaml
+
+name: convnext_midfusion
+description: "ConvNeXt-Tiny mid-fusion (LN+GELU, MLP head) with all spectral + topo"
+
+model:
+  architecture: convnext_midfusion
+  dropout: 0.3
+  drop_path_rate: 0.4
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full

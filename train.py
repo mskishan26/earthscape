@@ -35,9 +35,9 @@ from dataset import (
     list_sets,
 )
 from metrics import MetricsAccumulator, evaluate, print_epoch_summary
-from models import build_model, forward_batch, get_model_mode, prepare_inputs
-from models.deit import build_deit_llrd_param_groups
-from utils import compute_data_version, get_device, load_config, set_seed
+from models import MODEL_REGISTRY, build_model, forward_batch, get_model_mode, prepare_inputs
+from models.deit_latefusion import build_deit_llrd_param_groups
+from utils import compute_data_version, finalize_artifacts, get_device, load_config, save_source_snapshot, set_seed
 
 
 def setup_wandb(cfg: dict) -> bool:
@@ -321,6 +321,20 @@ def save_checkpoint(
     data_version: dict,
 ):
     """Save a training checkpoint with full reproducibility info."""
+    # Resolve model class metadata for standalone reconstruction
+    arch = cfg["model"].get("architecture", "")
+    model_meta = {}
+    if arch in MODEL_REGISTRY:
+        import inspect
+
+        model_cls = MODEL_REGISTRY[arch]["cls"]
+        model_meta = {
+            "model_class": model_cls.__name__,
+            "model_source_file": os.path.basename(inspect.getfile(model_cls)),
+            "model_mode": MODEL_REGISTRY[arch]["mode"],
+            "model_kwargs": MODEL_REGISTRY[arch].get("kwargs", {}),
+        }
+
     ckpt = {
         "epoch": epoch,
         "model_state": model.state_dict(),
@@ -335,6 +349,7 @@ def save_checkpoint(
         "config": cfg,
         "normalization_stats": stats,
         "data_version": data_version,
+        "model_meta": model_meta,
     }
     torch.save(ckpt, path)
 
@@ -346,6 +361,18 @@ def train(cfg: dict):
 
     # W&B
     wandb_active = setup_wandb(cfg)
+
+    # Save source code snapshot for reproducibility
+    snapshot_dir = save_source_snapshot(cfg)
+
+    # Upload source code to W&B early (survives training crashes)
+    if wandb_active:
+        import wandb
+
+        code_artifact = wandb.Artifact(f"source-{wandb.run.id}", type="source-code")
+        code_artifact.add_dir(snapshot_dir)
+        wandb.log_artifact(code_artifact)
+        print("[W&B] Source code artifact logged")
 
     # Data
     print("\n[Data] Building datasets...")
@@ -640,7 +667,7 @@ def train(cfg: dict):
     # ========================
     # Final Model Save
     # ========================
-    final_path = os.path.join(paths["model_dir"], "final_model.pth")
+    final_path = os.path.join(paths["checkpoint_dir"], "final_model.pth")
     save_checkpoint(
         final_path,
         model,
@@ -654,6 +681,13 @@ def train(cfg: dict):
         data_version,
     )
     print(f"\n[Save] Final model saved to {final_path}")
+
+    # On SageMaker, copy key artifacts into model dir for model.tar.gz
+    finalize_artifacts(cfg, [
+        (final_path, "final_model.pth"),
+        (best_ckpt_path, "best.pth"),
+        (cfg["paths"]["stats_path"], "normalization_stats.npy"),
+    ])
 
     # Save history
     history_path = os.path.join(paths["output_dir"], "training_history.npy")
@@ -723,9 +757,11 @@ def train(cfg: dict):
                     }
                 )
 
-        # Log model artifact
+        # Log model artifact (final + best checkpoint)
         artifact = wandb.Artifact(f"model-{wandb.run.id}", type="model")
         artifact.add_file(final_path)
+        if os.path.exists(best_ckpt_path):
+            artifact.add_file(best_ckpt_path)
         wandb.log_artifact(artifact)
         print("[W&B] Model artifact logged")
 

@@ -20,10 +20,13 @@ from typing import Dict, Union
 import torch
 import torch.nn as nn
 
+from models.convnext_midfusion import ConvNeXtMidFusion
+from models.deit_latefusion import DeiTLateFusion
+from models.deit_v1 import DeiTBackbone, DeiTEarlyFusion
+from models.deit_v1 import DeiTLateFusion as DeiTLateFusion_V1
 from models.midfusion import MidFusionResNet
 from models.midfusion_v3 import MidFusionResNet_V3
 from models.midfusion_v4 import MidFusionResNet_V4
-from models.deit import DeiTBackbone, DeiTEarlyFusion, DeiTLateFusion, DeiTLateFusion_Gated
 from models.modern_fusion import ModernMidFusion, ModernMidFusion_Gated
 from models.rgb_backbone import RGBBackbone
 
@@ -93,15 +96,15 @@ MODEL_REGISTRY = {
         "mode": "rgb",
     },
     "deit_fusion": {
-        "cls": DeiTLateFusion,
+        "cls": DeiTLateFusion_V1,
         "mode": "full",
     },
     "deit_early_fusion": {
         "cls": DeiTEarlyFusion,
         "mode": "full",
     },
-    "deit_fusion_gated": {
-        "cls": DeiTLateFusion_Gated,
+    "deit_latefusion": {
+        "cls": DeiTLateFusion,
         "mode": "full",
     },
     # ConvNeXt-Small variants
@@ -114,6 +117,11 @@ MODEL_REGISTRY = {
         "cls": ModernMidFusion_Gated,
         "mode": "full",
         "kwargs": {"backbone": "convnext_small"},
+    },
+    # ConvNeXt-Tiny mid-fusion (LN+GELU, MLP head)
+    "convnext_midfusion": {
+        "cls": ConvNeXtMidFusion,
+        "mode": "full",
     },
 }
 

@@ -23,7 +23,7 @@ cache:
   # Local NVMe cache directory (SageMaker g4dn has 125GB at /opt/ml/input)
   # Locally, uses /home/ksathish/earthscape/data_cache
   # Files are downloaded once and kept forever (no eviction)
-  local_cache_dir: "/home/ksathish/earthscape/data_cache"  # auto-detected on SM: /opt/ml/input/data_cache
+  local_cache_dir: null  # auto: /opt/ml/input/data_cache on SM, ./data_cache locally
 
 # --- Training ---
 training:

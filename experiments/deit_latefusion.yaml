@@ -1,0 +1,17 @@
+# ============================================================================
+# DeiT3-Small Dual-Backbone Late Fusion
+# ============================================================================
+# python train.py --experiment experiments/deit_fusion.yaml
+# Enable LLRD: --model.llrd_decay 0.75
+
+name: deit_latefusion_sage
+description: "DeiT3-Small late fusion (MLP head) with all spectral + topo"
+
+model:
+  architecture: deit_latefusion
+  dropout: 0.3
+
+features:
+  spectral_modalities: ["aerialr", "aerialg", "aerialb", "aerialnir"]
+  topo_modalities: ["dem", "ep_51x51", "slope_50", "procurv_50", "plancurv_50", "stdslope_51x51", "nhd"]
+  mode: full

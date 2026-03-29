@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 wandb/
+.wandb_artifacts/
 outputs/
 data_cache/
 outputs1/

@@ -4,8 +4,10 @@ Utilities: config loading, seed setting, path resolution, data versioning.
 
 import argparse
 import hashlib
+import inspect
 import os
 import random
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -77,6 +79,7 @@ def load_experiment(experiment_path: str) -> dict[str, Any]:
     """
     with open(experiment_path) as f:
         experiment = yaml.safe_load(f)
+    experiment["_source_path"] = os.path.abspath(experiment_path)
     print(f"[Experiment] Loaded: {experiment.get('name', experiment_path)}")
     if experiment.get("description"):
         print(f"  {experiment['description']}")
@@ -102,6 +105,7 @@ def merge_experiment_into_config(
     cfg["_experiment"] = {
         "name": experiment.get("name", "unnamed"),
         "description": experiment.get("description", ""),
+        "path": experiment.get("_source_path", ""),
     }
 
     # Merge model config
@@ -179,6 +183,7 @@ def _resolve_paths(cfg: dict) -> dict:
         default_model_dir = "/opt/ml/model"
         default_output_dir = "/opt/ml/output"
         default_cache_dir = "/opt/ml/input/data_cache"
+        default_checkpoint_dir = "/opt/ml/checkpoints"
     else:
         base_output = "./outputs"
         if exp_name:
@@ -191,11 +196,12 @@ def _resolve_paths(cfg: dict) -> dict:
 
     paths["model_dir"] = paths.get("model_dir") or default_model_dir
     paths["output_dir"] = paths.get("output_dir") or default_output_dir
-    paths["checkpoint_dir"] = paths.get("checkpoint_dir") or os.path.join(
-        paths["model_dir"], "checkpoints"
+    paths["checkpoint_dir"] = paths.get("checkpoint_dir") or (
+        default_checkpoint_dir if is_sagemaker else os.path.join(paths["model_dir"], "checkpoints")
     )
     paths["stats_path"] = paths.get("stats_path") or os.path.join(
-        paths["model_dir"], "normalization_stats.npy"
+        paths["checkpoint_dir"] if is_sagemaker else paths["model_dir"],
+        "normalization_stats.npy",
     )
 
     cache["local_cache_dir"] = cache.get("local_cache_dir") or default_cache_dir
@@ -210,6 +216,100 @@ def _resolve_paths(cfg: dict) -> dict:
     os.makedirs(cache["local_cache_dir"], exist_ok=True)
 
     return cfg
+
+
+# ============================================================================
+# Artifact Finalization
+# ============================================================================
+
+
+def finalize_artifacts(cfg: dict, artifact_paths: list[tuple[str, str]]):
+    """
+    Ensure training artifacts end up in the right locations.
+
+    On SageMaker, copies artifacts from the synced checkpoint dir
+    (/opt/ml/checkpoints) into the model dir (/opt/ml/model) so they
+    get packaged into model.tar.gz for deployment.
+
+    Locally this is a no-op since checkpoint_dir is already under model_dir.
+
+    Args:
+        cfg: Resolved config dict.
+        artifact_paths: List of (source_path, filename) tuples to copy into
+            model_dir.  e.g. [("/opt/ml/checkpoints/best.pth", "best.pth")]
+    """
+    if not cfg["_is_sagemaker"]:
+        return
+
+    model_dir = cfg["paths"]["model_dir"]
+    for src, name in artifact_paths:
+        if os.path.exists(src):
+            dest = os.path.join(model_dir, name)
+            shutil.copy2(src, dest)
+            print(f"[SageMaker] Copied {name} to {dest}")
+
+
+# ============================================================================
+# Source Code Snapshot
+# ============================================================================
+
+
+def save_source_snapshot(cfg: dict) -> str:
+    """
+    Save a snapshot of all source files for reproducibility.
+
+    Copies:
+      1. All .py and .yaml files from the project base folder
+      2. The specific model file used by this run's architecture
+      3. The experiment YAML file
+
+    Returns the path to the snapshot directory.
+    """
+    from models import MODEL_REGISTRY
+
+    output_dir = cfg["paths"]["output_dir"]
+    snapshot_dir = os.path.join(output_dir, "source_code")
+    os.makedirs(snapshot_dir, exist_ok=True)
+
+    # --- 1. Base folder files (.py, .yaml, .txt) ---
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_extensions = (".py", ".yaml", ".txt", ".toml", ".sh")
+    copied = []
+    for fname in sorted(os.listdir(base_dir)):
+        if os.path.isfile(os.path.join(base_dir, fname)) and fname.endswith(
+            base_extensions
+        ):
+            shutil.copy2(os.path.join(base_dir, fname), snapshot_dir)
+            copied.append(fname)
+
+    # --- 2. Relevant model file (based on architecture) ---
+    arch = cfg["model"].get("architecture", "")
+    models_snap_dir = os.path.join(snapshot_dir, "models")
+    os.makedirs(models_snap_dir, exist_ok=True)
+
+    # Always copy models/__init__.py (registry)
+    models_init = os.path.join(base_dir, "models", "__init__.py")
+    if os.path.exists(models_init):
+        shutil.copy2(models_init, models_snap_dir)
+
+    # Copy the specific model source file
+    if arch in MODEL_REGISTRY:
+        model_cls = MODEL_REGISTRY[arch]["cls"]
+        model_src = inspect.getfile(model_cls)
+        if os.path.exists(model_src):
+            shutil.copy2(model_src, models_snap_dir)
+            copied.append(f"models/{os.path.basename(model_src)}")
+
+    # --- 3. Experiment config file ---
+    exp_path = cfg.get("_experiment", {}).get("path", "")
+    if exp_path and os.path.exists(exp_path):
+        exp_snap_dir = os.path.join(snapshot_dir, "experiments")
+        os.makedirs(exp_snap_dir, exist_ok=True)
+        shutil.copy2(exp_path, exp_snap_dir)
+        copied.append(f"experiments/{os.path.basename(exp_path)}")
+
+    print(f"[Snapshot] Saved {len(copied)} source files to {snapshot_dir}")
+    return snapshot_dir
 
 
 # ============================================================================
